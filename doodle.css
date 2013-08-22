@@ -1,0 +1,57 @@
+canvas
+{
+  border: 1px solid;
+  cursor: crosshair;
+  margin: 4px;
+}
+
+.ui-dialog, #toolbar
+{
+  font-size: 10pt;
+}
+
+#toolbar .ui-slider
+{
+  font-size: 8pt;
+  margin: 4px 2px;
+}
+.colorpicker .ui-slider
+{
+  max-width: 75%;
+}
+.red .ui-slider-range
+{
+  background: #e00;
+}
+.green .ui-slider-range
+{
+  background: #0e0;
+}
+.blue .ui-slider-range
+{
+  background: #00e;
+}
+
+body {
+  background-color: #ddd;
+  -moz-user-select: -moz-none;
+  -khtml-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+#replaycontrols {
+  font-size: 8pt;
+}
+
+.flipped {
+  -moz-transform: scaleX(-1);
+  -o-transform: scaleX(-1);
+  -webkit-transform: scaleX(-1);
+  transform: scaleX(-1);
+}
+
+.ui-icon {
+  float: left;
+}
