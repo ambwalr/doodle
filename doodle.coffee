@@ -6,17 +6,22 @@ body = $ "body"
 canvaselem = $ "#doodlecanvas"
 canvasobj = canvaselem[0].getContext "2d"
 
+tag = ( type="div", body="" ) -> "<#{type}>#{body}</#{type}>"
+dataurl = (data) -> "data:image/svg+xml;base64,"+btoa data
+
 wacom = -> document.getElementById 'wtPlugin'
+tabletaffectsradius = false
+tabletaffectsopacity = false
+
 
 isdrawing = false
 holdingright = false
 
 cache = []
 
-rgba = ( r, g, b, a ) ->
-  r: r, g: g, b: b, a: a
+rgba = ( r, g, b, a ) -> r: r, g: g, b: b, a: a
 
-recentcolors = [ rgba(0,0,0,1), rgba(255,255,255,1), rgba(255,0,0,1) ]
+recentcolors = [ rgba(0,0,0,1), rgba(255,255,255,1), rgba(255,0,0,1), rgba(255,130,110,1) ]
 
 socket = undefined
 
@@ -27,16 +32,15 @@ canvaselem.mousedown (e) ->
   if e.button == 2
     holdingright = true
     rdown e
-canvaselem.mouseup (e) ->
+
+cancel = (e) ->
   if e.button == 0
     isdrawing = false
   if e.button == 2
     holdingright = false
-body.mouseup (e) ->
-  if e.button == 0
-    isdrawing = false
-  if e.button == 2
-    holdingright = false
+
+canvaselem.mouseup cancel
+body.mouseup cancel
 
 correctpos = (e) ->
   screenpageoffset = x: e.screenX-e.pageX, y: e.screenY-e.pageY
@@ -52,16 +56,13 @@ correctpos = (e) ->
   offset = canvaselem.offset()
   x-=offset.left
   y-=offset.top
-  if flipped
-    x = canvaselem.width()-x
-
+  if flipped then x = canvaselem.width()-x
   
   return x: x, y: y
 
-color = r: 0, g: 0, b: 0, a: 1
+color = rgba 0,0,0,1
 
-canvaselem.bind 'contextmenu', (e) ->
-  return false
+canvaselem.bind 'contextmenu', (e) -> false
 
 rdown = (e) ->
   mpos = correctpos e
@@ -97,14 +98,55 @@ cancelright = (e) ->
 canvaselem.mouseup cancelright
 
 updaterecentcolors = () ->
+  if color in recentcolors
+    i=recentcolors.indexOf color
+    recentcolors.splice i, 1
+    recentcolors.unshift color
+    updateswatches()
   if color not in recentcolors
-    recentcolors.push color
+    recentcolors.unshift color
     updateswatches()
   if recentcolors.length > 8
-    recentcolors.shift()
+    recentcolors.pop()
     updateswatches()
 
+switchcolor = () ->
+  c = recentcolors.shift()
+  recentcolors.push c
+  updateswatches()
+  updatecolor recentcolors[0]
+
+bindings = {}
+keytapbind = ( key, func ) ->
+  k=key.toUpperCase().charCodeAt 0
+  bindings[k]=func
+
+keytapbind 'x', switchcolor
+
+$(document).bind 'keydown', (e) ->
+  key = e.which
+  console.log e.which
+  console.log bindings
+  if bindings.hasOwnProperty key
+    bindings[key]()
+
 threshfraction = 0.5
+
+tabletmodifier = ( st ) ->
+  penapi = wacom().penAPI
+  pressure = penapi.pressure
+  if penapi.isEraser
+    newcolor = rgba 255, 255, 255, 1
+    pressure = 1
+  w=st.width
+  f=st.from
+  t=st.to
+  c=st.color
+  if tabletaffectsradius then w = w*pressure
+  if tabletaffectsopacity
+    newalpha = c.a * pressure
+    c = rgba c.r, c.g, c.b, newalpha
+  return from: f, to: t, width: w, color: c
 
 draw = (mpos) ->
   if not isdrawing
@@ -113,18 +155,12 @@ draw = (mpos) ->
     return
   updaterecentcolors()
   penapi = wacom().penAPI
-  if penapi and penapi.isInProximity
-    pressure = penapi.pressure
-  else
-    pressure = 1
-  r = maxradius * pressure
-  threshold = r* threshfraction
   if prev
-    if penapi and penapi.isEraser
-      tmpcolor = r: 255, g: 255, b: 255, a: 1
-      stroke prev.x, prev.y, mpos.x, mpos.y, r, tmpcolor
-    else
-      stroke prev.x, prev.y, mpos.x, mpos.y, r, color
+    st = from: prev, to: mpos, width: maxradius, color: color
+    if penapi and penapi.isInProximity
+      st=tabletmodifier st
+    #threshold = r* threshfraction
+      makestroke st
     #if not lastdab
     #  dab mpos, r, color
     #  lastdab = x: mpos.x, y: mpos.y
@@ -152,22 +188,24 @@ canvaselem.mousemove (e) ->
 csscolor = ( col ) ->
   "rgba(#{col.r},#{col.g},#{col.b},#{col.a})"
 
-drawstroke = ( from, to, r, col ) ->
-  canvasobj.strokeStyle = csscolor col
-  canvasobj.lineWidth = r
+drawstroke = ( st ) ->
+  canvasobj.strokeStyle = csscolor st.color
+  canvasobj.lineWidth = st.width
   canvasobj.lineCap="round"
   canvasobj.beginPath()
-  canvasobj.moveTo from.x, from.y
-  canvasobj.lineTo to.x, to.y
+  canvasobj.moveTo st.from.x, st.from.y
+  canvasobj.lineTo st.to.x, st.to.y
   canvasobj.stroke()
 
 noop = ->
 handler = ( data, jblerf ) ->
   #console.log data
 
-stroke = ( x1, y1, x2, y2, r, col ) ->
-  from = x: x1, y: y1
-  to = x: x2, y: y2
+makestroke = ( st ) ->
+  from = st.from
+  to = st.to
+  r = st.width
+  col = st.color
   #drawstroke( from, to, r, col )
   strokedata = color: col, width: r, from: from, to: to
   cache.push strokedata
@@ -192,8 +230,8 @@ drawdab = ( pos, r, col ) ->
 toolbar = $ "<div id=toolbar>"
 body.append toolbar
 
-header = (str) -> $ "<h3>#{str}</h3>"
-label = (str) -> $ "<label>#{str}</label>"
+header = (str) -> $ tag "h3", str
+label = (str) -> $ tag "label", str
 
 toolbar.append header "brush"
 toolbar.append container = $ "<div>"
@@ -211,6 +249,17 @@ radiusslider = $ "<div></div>"
 radiusslider.slider min: 1, max: 100, slide: (e,ui) ->
   maxradius = ui.value
 container.append radiusslider
+
+brushsizedelta = ( delta ) ->
+  maxradius = maxradius + delta
+  maxradius = Math.max maxradius, 1
+  maxradius = Math.min maxradius, 100
+  radiusslider.slider value: maxradius
+brushsizeup = -> brushsizedelta 1
+brushsizedown = -> brushsizedelta -1
+
+keytapbind 'd', brushsizedown
+keytapbind 'f', brushsizeup
 
 toolbar.append header "color"
 toolbar.append colorpicker = $ "<div>"
@@ -254,7 +303,7 @@ colorpicker.append swatches
 
 updateswatches = ->
  x = recentcolors.map (col) ->
-   but= $ "<button></button>"
+   but= $ tag "button"
    but.css "background": csscolor col
    but.button()
    but.css width: 20, height: 20
@@ -280,7 +329,7 @@ replaytick = ->
   for x in [0..strokespertick]
     if cache.length > lastframe
       curr = cache[lastframe]
-      drawstroke curr.from, curr.to, curr.width, curr.color
+      drawstroke curr
       #drawdab curr.p, curr.r, curr.c
       lastframe++
   timebar.progressbar value: lastframe, max: cache.length
@@ -300,7 +349,6 @@ tolast = ->
 skipbutton = $ "<button>SKIP replay</button>"
 skipbutton.click skipreplay
 skipbutton.button()
-
 
 loadbutton = $ "<button>(re)load session</button>"
 loadbutton.click -> loadsession()
@@ -322,11 +370,15 @@ loadsession = ->
     )
     , 'json'
 
-#toolbar.append header "tablet (wacom)"
-#toolbar.append container = $ "<div>"
-#container.append label "pressure affects..."
-#container.append $ "<input type=checkbox id=pressure /><label for=pressure>pressure</label>"
-#container.append $ "<input type=checkbox id=opacity /><label for=opacity>opacity</label>"
+toolbar.append header "tablet (wacom)"
+toolbar.append container = $ "<div>"
+container.append label "pressure affects..."
+container.append $ "<input type=checkbox id=pressure /><label for=pressure>size</label>"
+container.append $ "<input type=checkbox id=opacity /><label for=opacity>opacity</label>"
+
+$('#pressure').change -> tabletaffectsradius = this.checked
+$('#opacity').change -> tabletaffectsopacity = this.checked
+
 
 toolbar.append header "misc"
 toolbar.append container = $ "<div>"
@@ -337,17 +389,36 @@ exportpng = ->
 
   window.open url
 
-savebutton = $ "<button>.png</button>"
+keytapbind 'p', exportpng
+
+
+savebutton = $ tag "button", ".png"
 
 savebutton.click -> exportpng()
 savebutton.button()
 container.append savebutton
 
+
+exportsvg = ->
+  #TODO don't hardcode these
+  data=""
+  data+= "<svg xmlns='http://www.w3.org/2000/svg' version='1.1' viewbox='0 0 1000 600'>"
+  data+=cache.map( (s) -> "<line x1='#{s.from.x}' y1='#{s.from.y}' x2='#{s.to.x}' y2='#{s.to.y}' stroke='#{csscolor s.color}' stroke-width='#{s.width}' stroke-linecap='round' />" ).join()
+  data+="</svg>"
+  window.open dataurl data
+  return false
+savebutton= $ tag "button", ".svg"
+savebutton.click -> exportsvg()
+savebutton.button()
+container.append savebutton
+
+
 exportjson = -> window.open "/getsession"
-savebutton = $ "<button>replay .json</button>"
+savebutton = $ tag "button", "replay .json"
 savebutton.click -> exportjson()
 savebutton.button()
 container.append savebutton
+
 container.append $ "<hr>"
 
 flipped = false
@@ -358,33 +429,15 @@ toggleflip = () ->
   else
     canvaselem.removeClass 'flipped'
 
-flipbutton = $ "<button>flip canvas view</button>"
+flipbutton = $ tag "button", "flip canvas view"
 flipbutton.click toggleflip
 flipbutton.button()
 
+keytapbind 'i', toggleflip
 
 container.append flipbutton
 
-antialias = true
-togglealias = () ->
-  antialias = not antialias
-  if antialias
-    canvasobj.mozImageSmoothingEnabled = false
-    canvasobj.webkitImageSmoothingEnabled = false
-    canvasobj.imageSmoothingEnabled = false
-  else
-    canvasobj.mozImageSmoothingEnabled = true
-    canvasobj.webkitImageSmoothingEnabled = true
-    canvasobj.imageSmoothingEnabled = true
-
-aliasbutton = $ "<button>toggle (anti)aliasing</button>"
-aliasbutton.click togglealias
-aliasbutton.button()
-#container.append aliasbutton
-
-
-
-bombbutton = $ "<button>BOMB</button>"
+bombbutton = $ tag "button", "BOMB"
 bombbutton.click ->
   if not confirm "are you super sure?" then return false
   cache = []
@@ -453,6 +506,16 @@ replaycontrols.append but = $ "<button>open toolbar</button>"
 but.button()
 but.click opentoolbar
 
+replaycontrols.append $ "<div id='hotkeyinfo'></div>"
+listdata = [ "i - flip canvas", "d/f - change brush size", "x - swap color", "right click - colorpick", "p - png snapshot" ]
+  .map (x) -> tag "li", x
+$("#hotkeyinfo").append tag "ul", listdata.join("")
+$("#hotkeyinfo").hide()
+
+replaycontrols.append but = $ "<button>hotkey info</button>"
+but.button()
+but.click -> $("#hotkeyinfo").dialog()
+
 info = $ "<textarea style='height: 100px;' readonly></textarea>"
 info.css width: '100%'
 body.append info
@@ -465,6 +528,7 @@ log = (text) ->
 $(document).ready ->
   loadsession()
   drawloop()
+  brushsizedelta 0
   updateswatches()
   socket = io.connect '/'
   socket.on 'stroke', (data) ->
