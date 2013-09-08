@@ -1,13 +1,20 @@
 canvas
 {
-  border: 1px solid;
   cursor: crosshair;
+}
+#canvascontainer
+{
+  border: 1px solid;
   margin: 4px;
+}
+canvas.disabled
+{
+  cursor: wait;
 }
 
 .ui-dialog, #toolbar
 {
-  font-size: 10pt;
+  font-size: 7pt;
 }
 
 #toolbar .ui-slider
@@ -54,4 +61,14 @@ body {
 
 .ui-icon {
   float: left;
+}
+
+#toolbar h3
+{
+  margin: 0;
+}
+
+#toolbar
+{
+  padding: 0 4;
 }

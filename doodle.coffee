@@ -2,9 +2,43 @@
 # a creatively named javascript app for multi user online doodling
 # by ambwalr at gmail
 
+CANVASWIDTH = 1200
+CANVASHEIGHT = 600
+
+ABSMINRADIUS = 1
+ABSMAXRADIUS = 100
+
+paused = false
+
+contain = $ "<div>"
+contain.resizable handles: 's' # grid: 50
+canvascontainer = $ "<div id=canvascontainer>"
+contain.css resize: 'vertical', 'border-bottom': '2px solid gray', 'padding-bottom': 1
+contain.height 500
+#overflow: 'hidden'
+canvascontainer.css overflow: 'auto', 'min-height': 200
+canvascontainer.css height: '100%'
+
 body = $ "body"
-canvaselem = $ "#doodlecanvas"
+displaycanvaselem = $ "<canvas id=doodlecanvas>"
+canvaselem = $ "<canvas>"
+#id=doodlecanvas width=1000 height=600>"
+body.append contain
+contain.append canvascontainer
+
+displaycanvaselem.attr height: CANVASHEIGHT
+canvaselem.attr height: CANVASHEIGHT
+displaycanvaselem.attr width: CANVASWIDTH
+canvaselem.attr width: CANVASWIDTH
+
+displaycanvasctx = displaycanvaselem[0].getContext "2d"
+displaycanvasctx.fillStyle ='white'
+displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
+canvascontainer.append displaycanvaselem
+
 canvasobj = canvaselem[0].getContext "2d"
+#body.append canvaselem
+
 
 tag = ( type="div", body="" ) -> "<#{type}>#{body}</#{type}>"
 dataurl = (data) -> "data:image/svg+xml;base64,"+btoa data
@@ -13,19 +47,27 @@ wacom = -> document.getElementById 'wtPlugin'
 tabletaffectsradius = false
 tabletaffectsopacity = false
 
+antialias = true
 
 isdrawing = false
 holdingright = false
 
+nocache = false
 cache = []
 
+V2d = (x,y) -> x: x, y: y
+mpos = V2d 0,0
+
+
 rgba = ( r, g, b, a ) -> r: r, g: g, b: b, a: a
+adjustalpha = ( col, alpha ) ->
+  rgba col.r, col.g, col.b, alpha
 
 recentcolors = [ rgba(0,0,0,1), rgba(255,255,255,1), rgba(255,0,0,1), rgba(255,130,110,1) ]
 
 socket = undefined
 
-canvaselem.mousedown (e) ->
+displaycanvaselem.mousedown (e) ->
   if e.button == 0
     mpos = correctpos e
     isdrawing = true
@@ -43,7 +85,7 @@ canvaselem.mouseup cancel
 body.mouseup cancel
 
 correctpos = (e) ->
-  screenpageoffset = x: e.screenX-e.pageX, y: e.screenY-e.pageY
+  screenpageoffset = V2d e.screenX-e.pageX, e.screenY-e.pageY
   x=e.pageX
   y=e.pageY
   #penapi = wacom().penAPI
@@ -53,16 +95,17 @@ correctpos = (e) ->
   #  y = penapi.sysY
   #  x -= screenpageoffset.x
   #  y -= screenpageoffset.y
-  offset = canvaselem.offset()
+  offset = displaycanvaselem.offset()
   x-=offset.left
   y-=offset.top
   if flipped then x = canvaselem.width()-x
-  
-  return x: x, y: y
+  x-- #border
+  y--
+  return V2d x,y
 
 color = rgba 0,0,0,1
 
-canvaselem.bind 'contextmenu', (e) -> false
+displaycanvaselem.bind 'contextmenu', (e) -> false
 
 rdown = (e) ->
   mpos = correctpos e
@@ -71,20 +114,20 @@ rdown = (e) ->
   g = imgd.data[1]
   b = imgd.data[2]
   a = color.a
-  console.log mpos
-  console.log imgd
   updatecolor rgba r, g, b, a
 
 prev = undefined
+
+minradius = 1
 maxradius = 10
 lastdab = undefined
 
 vnmul = ( v,n ) ->
-  return x: v.x*n, y: v.y*n
+  return V2d v.x*n, v.y*n
 vadd = ( a,b ) ->
-  return x: a.x+b.x, y: a.y+b.y
+  return V2d a.x+b.x, a.y+b.y
 vsub = ( a,b ) ->
-  return x: a.x-b.x, y: a.y-b.y
+  return V2d a.x-b.x, a.y-b.y
 
 vmag = ( v ) ->
   Math.sqrt( Math.pow(v.x,2)+Math.pow(v.y,2) )
@@ -95,7 +138,7 @@ vdist = ( a, b ) -> vmag vsub a,b
 cancelright = (e) ->
   if e.button == 2
     holdingright = false
-canvaselem.mouseup cancelright
+displaycanvaselem.mouseup cancelright
 
 updaterecentcolors = () ->
   if color in recentcolors
@@ -120,13 +163,13 @@ bindings = {}
 keytapbind = ( key, func ) ->
   k=key.toUpperCase().charCodeAt 0
   bindings[k]=func
+  body.append "<a accesskey=#{key}></a>"
 
 keytapbind 'x', switchcolor
 
 $(document).bind 'keydown', (e) ->
+  if not e.altKey then return
   key = e.which
-  console.log e.which
-  console.log bindings
   if bindings.hasOwnProperty key
     bindings[key]()
 
@@ -135,32 +178,37 @@ threshfraction = 0.5
 tabletmodifier = ( st ) ->
   penapi = wacom().penAPI
   pressure = penapi.pressure
+  adjustedradiuspressure = Math.pow pressure, 2
+  adjustedopacitypressure = Math.pow pressure, 3
+  c = st.color
   if penapi.isEraser
-    newcolor = rgba 255, 255, 255, 1
+    c = rgba 255, 255, 255, 1
     pressure = 1
   w=st.width
   f=st.from
   t=st.to
-  c=st.color
-  if tabletaffectsradius then w = w*pressure
+  #c=st.color
+  radiusrange = maxradius-minradius
+  if tabletaffectsradius then w = minradius+radiusrange*adjustedradiuspressure
   if tabletaffectsopacity
-    newalpha = c.a * pressure
-    c = rgba c.r, c.g, c.b, newalpha
+    newalpha = c.a * adjustedopacitypressure
+    c = adjustalpha c, newalpha
   return from: f, to: t, width: w, color: c
 
 draw = (mpos) ->
-  if not isdrawing
+  if ( not isdrawing ) or displaycanvaselem.hasClass "disabled"
     prev = undefined
     lastdab = undefined
     return
-  updaterecentcolors()
+  #updaterecentcolors()
   penapi = wacom().penAPI
+  if not prev then prev = mpos
   if prev
     st = from: prev, to: mpos, width: maxradius, color: color
-    if penapi and penapi.isInProximity
+    if penapi #and penapi.isInProximity
       st=tabletmodifier st
     #threshold = r* threshfraction
-      makestroke st
+    makestroke st
     #if not lastdab
     #  dab mpos, r, color
     #  lastdab = x: mpos.x, y: mpos.y
@@ -177,9 +225,12 @@ draw = (mpos) ->
     #    prev = mpos
     #    lastdab = x: mpos.x, y: mpos.y
 
-  prev = x: mpos.x, y: mpos.y
+  prev = V2d mpos.x, mpos.y
 
-canvaselem.mousemove (e) ->
+displaycanvaselem.click (e) ->
+  updaterecentcolors()
+
+displaycanvaselem.mousemove (e) ->
   if holdingright
     rdown e
   mpos = correctpos e
@@ -188,7 +239,7 @@ canvaselem.mousemove (e) ->
 csscolor = ( col ) ->
   "rgba(#{col.r},#{col.g},#{col.b},#{col.a})"
 
-drawstroke = ( st ) ->
+olddrawstroke = ( st ) ->
   canvasobj.strokeStyle = csscolor st.color
   canvasobj.lineWidth = st.width
   canvasobj.lineCap="round"
@@ -196,6 +247,75 @@ drawstroke = ( st ) ->
   canvasobj.moveTo st.from.x, st.from.y
   canvasobj.lineTo st.to.x, st.to.y
   canvasobj.stroke()
+
+clumps = ( arr, n ) ->
+  (arr[i...i+n] for x,i in arr[0..arr.length-n])
+
+#if we find we're in a bind, we'll just make some shit up
+experimentaldrawstroke = ( st ) ->
+  alphafrac = 1/2
+  radiusperdab = 1/20
+  if st.color.a is 1 then return olddrawstroke st
+  threshold = st.width*radiusperdab
+  FRAC=vdist( st.from, st.to )/(st.width)
+  dabcount=Math.ceil vdist( st.from, st.to )/threshold
+  dabcount = Math.max 2,dabcount
+  #if dabcount < 2 then return olddrawstroke st
+  dir=vsub st.to, st.from
+  dabz=[0..dabcount].map (n) ->
+    c=n/dabcount
+    offs = vnmul dir,c
+    return vadd st.from, offs
+  clumpdab = clumps dabz, 2
+  #clumpdab.push clumpdab[0]
+  tmpcol = adjustalpha st.color, st.color.a*alphafrac  #/ Math.pow FRAC, Math.E #st.color.a/20  #Math.pow st.color.a, Math.E #natural logarithm yo
+  for cd in clumpdab
+    tmpst = from: cd[0], to: cd[1], color: tmpcol, width: st.width
+    drawline canvasobj, tmpst
+  #if dabcount >= 1
+  #  for i in [1..dabcount]
+  #    c=i/max
+  #    offs=vnmul dir, c
+  #    tmpfrom = st.from
+  #    tmpto = vadd st.from, offs
+  #    tmpst = from: tmpfrom, to: tmpto, color: color, width: width
+  #    drawline canvasobj, tmpst
+  #  prev = mpos
+  #  lastdab = x: mpos.x, y: mpos.y
+
+drawline = ( canvasobj, st ) ->
+  canvasobj.strokeStyle = csscolor st.color
+  canvasobj.lineWidth = st.width
+  canvasobj.lineCap="round"
+  canvasobj.beginPath()
+  canvasobj.moveTo st.from.x, st.from.y
+  canvasobj.lineTo st.to.x, st.to.y
+  canvasobj.stroke()
+
+drawdab = ( st ) ->
+  #threshfraction = 1/2
+  #threshold = st.width*threshfraction
+  #if not lastdab
+  #  dab mpos, r, color
+  #  lastdab = x: mpos.x, y: mpos.y
+  #else
+  #dabcount=vdist( st.from, mpos )/threshold
+  #dir=vsub st.to, st.from
+  #dabcount = vmag(dir)
+  #if dabcount >= 1
+  #  max = Math.floor dabcount
+  #  for i in [0..max]
+  #    c=i/max
+  #    offs=vnmul dir, c
+  #    tmppos = vadd st.from, offs
+  #    drawhardfilledcircle canvasobj, tmppos, st.width/2, st.color
+
+drawstroke = ( st ) ->
+  if antialias
+    experimentaldrawstroke st
+    #olddrawstroke st
+  else
+    drawhardlinewidth canvasobj, st.from, st.to, st.color, st.width/2
 
 noop = ->
 handler = ( data, jblerf ) ->
@@ -212,7 +332,6 @@ makestroke = ( st ) ->
   replaytick()
   if socket
     socket.emit 'stroke', strokedata
-  #$.post '/sendstroke', strokedata, noop, "json"
 
 dab = ( pos, r, col ) ->
   dabdata = c: col, p: pos, r: r
@@ -228,7 +347,8 @@ drawdab = ( pos, r, col ) ->
   canvasobj.fill()
 
 toolbar = $ "<div id=toolbar>"
-body.append toolbar
+toolbar.css position: 'relative', overflow: 'auto', height: '100%'
+contain.append toolbar
 
 header = (str) -> $ tag "h3", str
 label = (str) -> $ tag "label", str
@@ -246,24 +366,29 @@ if WEDABSNOW
 
 container.append label "size"
 radiusslider = $ "<div></div>"
-radiusslider.slider min: 1, max: 100, slide: (e,ui) ->
-  maxradius = ui.value
+radiusslider.slider min: ABSMINRADIUS, max: ABSMAXRADIUS, range: true, slide: (e,ui) ->
+  minradius = ui.values[0]
+  maxradius = ui.values[1]
 container.append radiusslider
 
 brushsizedelta = ( delta ) ->
   maxradius = maxradius + delta
-  maxradius = Math.max maxradius, 1
-  maxradius = Math.min maxradius, 100
-  radiusslider.slider value: maxradius
-brushsizeup = -> brushsizedelta 1
-brushsizedown = -> brushsizedelta -1
+  maxradius = Math.max maxradius, ABSMINRADIUS
+  maxradius = Math.min maxradius, ABSMAXRADIUS
+  radiusslider.slider 'values', minradius, maxradius
 
-keytapbind 'd', brushsizedown
-keytapbind 'f', brushsizeup
+brushsizeup = ->
+  brushsizedelta 1
+brushsizedown = ->
+  brushsizedelta -1
+
+keytapbind 'z', brushsizedown
+keytapbind 'a', brushsizeup
 
 toolbar.append header "color"
 toolbar.append colorpicker = $ "<div>"
 colorpicker.addClass 'colorpicker'
+
 
 colorslider = ->
   sliderelem = $ "<div>"
@@ -285,9 +410,13 @@ alphaslider.slider min: 0, max: 1, step: 0.01, value: 1, slide: (e,ui) ->
 
 colorbox = $ "<div>&nbsp;</div>"
 colorpicker.append colorbox
-colorbox.css float: 'right', width: 32, height: 32, margin: 8
+colorbox.css height: 53, width: 20, float: 'right'
+
 
 colorpicker.append redslider, greenslider, blueslider, alphaslider
+
+colorpicker.append colorwheeldom = $ "<div>"
+colorwheel = Raphael.colorwheel colorwheeldom, 128
 
 updatecolor = ( col ) ->
   #color = r: r, g: g, b: b, a: a
@@ -297,9 +426,17 @@ updatecolor = ( col ) ->
   blueslider.slider value: color.b
   alphaslider.slider value: color.a
   colorbox.css "background", csscolor color
+  colorwheel.color csscolor color
+
+round=Math.round
+noop = ->
+colorwheel.ondrag noop, (rcol) ->
+  nc = rgba round(rcol.r), round(rcol.g), round(rcol.b), color.a
+  updatecolor nc
 
 swatches = $ "<div></div>"
 colorpicker.append swatches
+
 
 updateswatches = ->
  x = recentcolors.map (col) ->
@@ -311,10 +448,13 @@ updateswatches = ->
  swatches.html ''
  swatches.append x
 
+clearctx = (ctx) ->
+  ctx.fillStyle ='white'
+  ctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
+
 clearcanvas = ->
-  w = 1280
-  h = 700
-  canvasobj.clearRect 0, 0, w, h
+  canvasobj.fillStyle ='white'
+  canvasobj.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 
 lastframe = 0
 
@@ -325,47 +465,101 @@ startreplay = ->
 
 strokespertick = 1
 
+disablecanvas  = ->
+  displaycanvaselem.addClass "disabled"
+enablecanvas = ->
+  displaycanvaselem.removeClass "disabled"
+
+timecall = (func) ->
+  starttime = Date.now()
+  func()
+  Date.now()-starttime
+
 replaytick = ->
-  for x in [0..strokespertick]
-    if cache.length > lastframe
-      curr = cache[lastframe]
-      drawstroke curr
-      #drawdab curr.p, curr.r, curr.c
-      lastframe++
+  if lastframe == 0 and cache.length > 3
+    disablecanvas()
+  if lastframe == cache.length
+    if nocache and cache.length > 100 then clearlocalcache()
+    enablecanvas()
+  if cache.length > lastframe
+    for x in [0..strokespertick]
+      if cache.length > lastframe
+        curr = cache[lastframe]
+        drawstroke curr
+        #drawdab curr.p, curr.r, curr.c
+        lastframe++
   timebar.progressbar value: lastframe, max: cache.length
 
+cursoroncanvas=false
+displaycanvaselem.mouseenter -> cursoroncanvas=true
+displaycanvaselem.mouseout -> cursoroncanvas=false
+
 drawloop = ->
-  replaytick lastframe
-  setTimeout drawloop, 1
+  if not paused
+    times = timecall -> replaytick lastframe
+  clearctx displaycanvasctx
+  displaycanvasctx.drawImage canvaselem[0], 0, 0
+  setTimeout drawloop, times
+  if cursoroncanvas
+    drawcursor mpos, color, maxradius
+
+drawcursor = ( pos, col, rad ) ->
+  dcc=displaycanvasctx
+  dcc.beginPath()
+  dcc.arc pos.x, pos.y, rad/2, 0, 2*Math.PI, false
+  dcc.lineWidth = 1
+  dcc.fillStyle = 'none'
+  dcc.strokeStyle = csscolor adjustalpha col, 1/2
+  dcc.stroke()
 
 skipreplay = ->
   tolast()
   return false
+keytapbind 'k', skipreplay
 
 tolast = ->
   while cache.length > lastframe
     replaytick()
 
-skipbutton = $ "<button>SKIP replay</button>"
+skipbutton = $ "<button>\"skip\" replay (may cause a huge delay)</button>"
 skipbutton.click skipreplay
 skipbutton.button()
 
-loadbutton = $ "<button>(re)load session</button>"
-loadbutton.click -> loadsession()
-loadbutton.button()
+#loadbutton = $ "<button>(re)load session</button>"
+#loadbutton.click -> loadsession()
+#loadbutton.button()
+
+archiveurl="./files/archive/20130904.json.txt"
+loadarchivedsession = (url) ->
+  log "downloading session..."
+  $.get url,
+    ( (data, textstatus, jqxhr ) ->
+      cache = data
+      #size=jqxhr.getResponseHeader 'Content-Length'
+      fcount = cache.length
+      log "cache loaded, #{fcount} strokes."
+      startreplay()
+    )
+    , 'json'
+archivebutton = $ "<button>view an archived session</button>"
+archivebutton.click ->
+  alert "keep in mind this just affects your local replay, any new doodling that happens wll be sent to the current active session \n  TODO: fix this"
+  loadarchivedsession archiveurl
+archivebutton.button()
+
 
 replayspeed = $ "<div>"
 replayspeed.css 'width': 100
-replayspeed.slider min: 1, max: 100, slide: ( (e, ui) -> strokespertick = ui.value )
+replayspeed.slider min: 1, max: 200, slide: ( (e, ui) -> strokespertick = ui.value )
 
 loadsession = ->
   log "downloading session..."
   $.get '/getsession',
     ( (data, textstatus, jqxhr ) ->
       cache = data
-      size=jqxhr.getResponseHeader 'Content-Length'
+      #size=jqxhr.getResponseHeader 'Content-Length'
       fcount = cache.length
-      log "#{size} byte cache loaded, #{fcount} strokes."
+      log "cache loaded, #{fcount} strokes."
       startreplay()
     )
     , 'json'
@@ -376,12 +570,14 @@ container.append label "pressure affects..."
 container.append $ "<input type=checkbox id=pressure /><label for=pressure>size</label>"
 container.append $ "<input type=checkbox id=opacity /><label for=opacity>opacity</label>"
 
-$('#pressure').change -> tabletaffectsradius = this.checked
+$('#pressure').change ->
+  tabletaffectsradius = this.checked
 $('#opacity').change -> tabletaffectsopacity = this.checked
 
 
 toolbar.append header "misc"
 toolbar.append container = $ "<div>"
+
 
 container.append label "export "
 exportpng = ->
@@ -390,6 +586,7 @@ exportpng = ->
   window.open url
 
 keytapbind 'p', exportpng
+keytapbind 'r', startreplay
 
 
 savebutton = $ tag "button", ".png"
@@ -397,7 +594,6 @@ savebutton = $ tag "button", ".png"
 savebutton.click -> exportpng()
 savebutton.button()
 container.append savebutton
-
 
 exportsvg = ->
   #TODO don't hardcode these
@@ -412,40 +608,43 @@ savebutton.click -> exportsvg()
 savebutton.button()
 container.append savebutton
 
-
 exportjson = -> window.open "/getsession"
-savebutton = $ tag "button", "replay .json"
+savebutton = $ tag "button", ".json"
 savebutton.click -> exportjson()
 savebutton.button()
 container.append savebutton
 
-container.append $ "<hr>"
+#aliasbutton = $ tag "button", "toggle (anti)aliasing"
+#aliasbutton.click -> antialias = not antialias
+#aliasbutton.button()
+#container.append aliasbutton
+#container.append label "(EXPERIMENTAL, MAY BE SUPER SLOW )"
 
 flipped = false
 toggleflip = () ->
   flipped = not flipped
   if flipped
-    canvaselem.addClass 'flipped'
+    displaycanvaselem.addClass 'flipped'
   else
-    canvaselem.removeClass 'flipped'
+    displaycanvaselem.removeClass 'flipped'
+
 
 flipbutton = $ tag "button", "flip canvas view"
 flipbutton.click toggleflip
 flipbutton.button()
+container.append flipbutton
 
 keytapbind 'i', toggleflip
 
-container.append flipbutton
-
 bombbutton = $ tag "button", "BOMB"
 bombbutton.click ->
-  if not confirm "are you super sure?" then return false
+  if not ( confirm('really?') and confirm "are you super sure? this will nuke the contents of the canvas straight off the face of the earth" ) then return false
   cache = []
   startreplay()
   socket.emit 'bomb'
   return false
 bombbutton.button()
-bombbutton.css 'font-size': 10, 'margin-top': 50, color: 'darkred', display: 'block'
+bombbutton.css 'font-size': 10, 'margin-top': 20, color: 'darkred', display: 'block'
 container.append bombbutton
 
 # wee woo copy pasted code alert
@@ -469,71 +668,318 @@ $.fn.togglepanels = ->
   )
 # end of alert
 
+toolbar.css 'float': 'left', width: '150px'
+toolbar.insertBefore canvascontainer
+
 #toolbar.togglepanels()
-toolbar.dialog()
+#toolbar.dialog()
+#toolbar.dialog('open')
 
 opentoolbar = ->
-  $("#toolbar").dialog('open').dialog('widget').position( my: 'left', at: 'right', of: canvaselem )
-opentoolbar()
-
+  toolbar.dialog('open')
+  #.dialog('widget')
+  #.position( my: 'left', at: 'left', of: canvaselem )
 replaycontrols = $ "<div id=replaycontrols>"
+replaycontrols.css clear: 'left'
 #replaycontrols.css width: '100%'
 #replaycontrols.css 'background-color':'#eee', border: '1px inset', padding: 2, 'float': 'left', 'width': '100%'
 
+#opentoolbar()
+
 body.append replaycontrols
+
+pausebutton = $ "<button>pause/unpause replay</button>"
+pausebutton.button()
+pausebutton.click ->
+  paused=not paused
 
 replaybutton = $ "<button>restart replay</button>"
 replaybutton.button()
 replaybutton.click startreplay
 
-replayspeed.css 'margin': 5
+replayspeed.css 'margin': 5, float: 'left'
 
 timebar = $ "<div></div>"
 replaycontrols.append "<label>replay speed</label>"
-replaycontrols.append replayspeed, timebar
+replaycontrols.append replayspeed
 replaycontrols.append skipbutton
 cachebutton = $ "<button>clear local replay cache</button>"
-cachebutton.click ->
-  tolast()
+clearlocalcache = ->
   cache = []
   lastframe = 0
+cachebutton.click clearlocalcache
 cachebutton.button()
-replaycontrols.append replaybutton, loadbutton, cachebutton
+replaycontrols.append pausebutton, replaybutton
+#cachebutton
+#loadbutton
+#archivebutton
+
+replaycontrols.append $ "<input type=checkbox id=nocache /><label for=nocache>clear cache automagically</label>"
+
+$('#nocache').change -> nocache = this.checked
 
 replaycontrols.append "&middot;"
 
-replaycontrols.append but = $ "<button>open toolbar</button>"
-but.button()
-but.click opentoolbar
+#replaycontrols.append but = $ "<button id=toolbarbutton>open toolbar</button>"
+#but.button()
+#but.click opentoolbar
 
 replaycontrols.append $ "<div id='hotkeyinfo'></div>"
-listdata = [ "i - flip canvas", "d/f - change brush size", "x - swap color", "right click - colorpick", "p - png snapshot" ]
+listdata = [ "i - flip canvas", "a/z - change brush size", "x - swap color", "p - png snapshot", "r - replay", "k - skip replay (takes a while)" ]
   .map (x) -> tag "li", x
-$("#hotkeyinfo").append tag "ul", listdata.join("")
+$("#hotkeyinfo").append "Hold alt and press one of the following:\n"+tag "ul", listdata.join("")
 $("#hotkeyinfo").hide()
 
 replaycontrols.append but = $ "<button>hotkey info</button>"
 but.button()
 but.click -> $("#hotkeyinfo").dialog()
 
-info = $ "<textarea style='height: 100px;' readonly></textarea>"
-info.css width: '100%'
+replaycontrols.append timebar
+
+
+#info = $ "<textarea style='height: 100px;' readonly></textarea>"
+info = $ "<div>"
+info.css width: '100%', background: 'white', font: 'sans-serif', overflow: 'scroll', height: '300px'
+
+zeropad = (num) ->
+  if num < 10
+    return '0'+num
+  return String num
+
+infoprepend = (text) ->
+  now=new Date
+  hh=zeropad now.getHours()
+  mm=zeropad now.getMinutes()
+  ss=zeropad now.getSeconds()
+  timestamp = "#{hh}:#{mm}:#{ss}"
+  text=timestamp+"|&nbsp;"+text
+  info.prepend text
+
+timelog = (time,text) ->
+  hh=zeropad time.getHours()
+  mm=zeropad time.getMinutes()
+  ss=zeropad time.getSeconds()
+  timestamp = "#{hh}:#{mm}:#{ss}"
+  text=timestamp+"|&nbsp;"+text
+  info.prepend text
+
+htmlencode = (str) ->
+  String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+someonesaid = ( time, name, text ) ->
+  time = new Date time
+  timelog time, "#{htmlencode name}> #{htmlencode text}<br/>\n"
+
+chatname = false
+say = ( text ) ->
+  if not chatname
+    chatname = prompt "pick a name", 'anon'
+  if not chatname then return
+  text=chatinput.val()
+  time=Date.now()
+  someonesaid time, chatname, text
+  socket.emit 'say', { name: chatname, text: text, time: time }
+
+
+chatbox = $ "<form>"
+chatbox.css margin: 0
+chatbox.submit ->
+  say chatinput.val()
+  chatinput.val ''
+  return false
+
+body.append chatbox
+chatbox.append chatinput = $ "<input type='text' placeholder='type words here'>"
+#chatbox.append $ "<input type='submit' value='say'></input>"
+chatinput.css 'width': '100%'
+chatinput 
+
 body.append info
+info.css 'user-select': 'text'
+
 
 skipbutton.css 'float': 'right'
 
 log = (text) ->
-  info.prepend "#{text}<br/>\n"
+  infoprepend "**#{text}<br/>\n"
+
+loadchat = ->
+  $.get '/chatlog',
+    ( (data, textstatus, jqxhr ) ->
+      for datum in data
+        someonesaid datum.time, datum.name, datum.text
+    )
+    , 'json'
 
 $(document).ready ->
   loadsession()
+  loadchat()
+  disablecanvas()
   drawloop()
   brushsizedelta 0
   updateswatches()
   socket = io.connect '/'
   socket.on 'stroke', (data) ->
     cache.push data
+  socket.on 'say', (data) ->
+    someonesaid data.time, data.name, data.text 
   socket.on 'bomb', (data) ->
     cache = []
     startreplay()
 
+drawpixel = ( ctx, x, y, col ) ->
+  ctx.fillStyle = csscolor col
+  size = 1
+  ctx.fillRect x, y, size, size
+
+intvector = (vec) ->  
+  x: Math.round( vec.x ), y: Math.round( vec.y )
+
+drawhardline= ( ctx, from, to, col ) ->
+  #from = intvector from
+  #to = intvector to
+  deltax = to.x - from.x
+  deltay = to.y - from.y
+  error = 0
+  deltaerr = Math.abs(deltay/deltax)
+  y = from.y
+  for x in [from.x..to.x]
+    drawpixel ctx, x, y, col
+    error = error + deltaerr
+    if error > 0.5
+      y = y + 1
+      error = error - 1
+
+bresenham = ( from, to, func ) ->
+  from = intvector from
+  to = intvector to
+  dx = Math.abs to.x-from.x
+  dy = Math.abs to.y-from.y
+  sx = if from.x < to.x then 1 else -1
+  sy = if from.y < to.y then 1 else -1
+  x = from.x
+  y = from.y
+  err=dx-dy
+  loopiterations = 0
+  loop
+    loopiterations++
+    func x, y
+    if x==to.x and y==to.y
+      break
+    e2=2*err
+    if e2>-dy
+      err=err-dy
+      x+=sx
+    if x==to.x and y==to.y
+      func x, y
+      break
+    if e2<dx
+      err=err+dx
+      y+=sy
+
+drawhardline = ( ctx, from, to, col ) ->
+  bresenham from, to, ( x, y ) ->
+    drawpixel ctx, x, y, col
+
+ALTdrawhardlinewidth = ( ctx, from, to, col, r ) ->
+  bresenham from, to, ( x, y ) ->
+    pos = V2d x, y
+    drawhardfilledcircle ctx, pos, r, col
+
+drawhardfilledcircle = ( ctx, pos, r, col ) ->
+  r = Math.floor r
+  x0 = Math.round pos.x
+  y0 = Math.round pos.y
+  x = r
+  y = 0
+  radiuserror = 1-x
+  while x>= y
+    drawhardline ctx, V2d( x+x0,  y+y0), V2d(-x+x0,  y+y0), col
+    drawhardline ctx, V2d( y+x0,  x+y0), V2d(-y+x0,  x+y0), col
+    drawhardline ctx, V2d(-x+x0, -y+y0), V2d( x+x0, -y+y0), col
+    drawhardline ctx, V2d(-y+x0, -x+y0), V2d( y+x0, -x+y0), col
+    y++
+    if radiuserror<0
+      radiuserror+=2*y+1
+    else
+      x--
+      radiuserror+=2*(y-x+1)
+
+midpointcircle = ( pos, r, func ) ->
+  if Math.floor(r) < r
+    offs = V2d 10, 0
+    rad = Math.floor(r)
+    midpointcircle vadd(pos,V2d(1,0)), rad, func
+    midpointcircle vadd(pos,V2d(0,1)), rad, func
+    return
+  x0 = Math.floor pos.x
+  y0 = Math.floor pos.y
+  x = r
+  y = 0
+  radiuserror = 1-x
+  while x>= y
+    func x+x0, y+y0
+    func y+x0, x+y0
+    func -x+x0, y+y0
+    func -y+x0, x+y0
+    func -x+x0, -y+y0
+    func -y+x0, -x+y0
+    func x+x0, -y+y0
+    func y+x0, -x+y0
+    y++
+    if radiuserror<0
+      radiuserror+=2*y+1
+    else
+      x--
+      radiuserror+=2*(y-x+1)
+
+drawhardcircle = ( ctx, pos, r, col ) ->
+  midpointcircle pos, r, (x, y) ->
+    drawpixel ctx, x, y, col
+
+sign = ( x ) ->
+  if x > 0 then return 1
+  if x < 0 then return -1
+  return 0
+
+drawhardlinewidth = ( ctx, from, to, col, r ) ->
+  r= r-1
+  drawhardfilledcircle ctx, from, r, col
+  offs = vsub to, from
+  #drawhardline ctx, from, to, col
+  midpointcircle from, r, ( x, y ) ->
+    f = V2d x,y
+    t = vadd f, offs
+    drawhardline ctx, f, t, col
+    SHIT = vsub from, f
+    xSHIT = V2d( sign(SHIT.x), 0 )
+    drawhardline ctx, vadd(f,xSHIT), vadd(t,xSHIT), col
+    ySHIT = V2d( 0, sign(SHIT.y) )
+    drawhardline ctx, vadd(f,ySHIT), vadd(t,ySHIT), col
+
+#drawhardlinewidth = (ctx,from,to,col,r) ->
+#  drawhardcircle ctx,from,r,col
+
+FUCK = ->
+  x0 = Math.floor pos.x
+  y0 = Math.floor pos.y
+  x = r
+  y = 0
+  radiuserror = 1-x
+  while x>= y
+    drawpixel ctx, x+x0, y+y0, col
+    drawpixel ctx, y+x0, x+y0, col
+    drawpixel ctx, -x+x0, y+y0, col
+    drawpixel ctx, -y+x0, x+y0, col
+    drawpixel ctx, -x+x0, -y+y0, col
+    drawpixel ctx, -y+x0, -x+y0, col
+    drawpixel ctx, x+x0, -y+y0, col
+    drawpixel ctx, y+x0, -x+y0, col
+    y++
+    if radiuserror<0
+      radiuserror+=2*y+1
+    else
+      x--
+      radiuserror+=2*(y-x+1)
+
+updatecolor rgba 0, 0, 0, 1
