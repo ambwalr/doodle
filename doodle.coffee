@@ -2,6 +2,8 @@
 # a creatively named javascript app for multi user online doodling
 # by ambwalr at gmail
 
+NETWORKED = true
+
 CANVASWIDTH = 1200
 CANVASHEIGHT = 600
 
@@ -9,6 +11,35 @@ ABSMINRADIUS = 1
 ABSMAXRADIUS = 100
 
 paused = false
+currentbrush = 'default'
+
+class Layer
+  constructor: () ->
+    @visible=true
+    @strokes=[]
+    jqnew=$ "<canvas>"
+    jqnew.attr width: CANVASWIDTH, height: CANVASHEIGHT
+    jqnew.css border: '1px solid black'
+    @canvas=jqnew[0]
+
+alllayers = [ new Layer(), new Layer(), new Layer() ]
+
+canvaselem = false
+canvasobj = false
+
+layers = {}
+layers.current = 0
+layers.change = ( layernumber ) ->
+  alllayers.forEach ( layer ) ->
+    $(layer.canvas).removeClass 'selectedlayer'
+  layers.current = layernumber
+  console.log layernumber
+  lay = alllayers[layernumber]
+  canvaselem = $(lay.canvas)
+  canvaselem.addClass 'selectedlayer'
+  canvasobj = lay.canvas.getContext "2d"
+
+layers.change 0
 
 contain = $ "<div>"
 contain.resizable handles: 's' # grid: 50
@@ -21,7 +52,6 @@ canvascontainer.css height: '100%'
 
 body = $ "body"
 displaycanvaselem = $ "<canvas id=doodlecanvas>"
-canvaselem = $ "<canvas>"
 #id=doodlecanvas width=1000 height=600>"
 body.append contain
 contain.append canvascontainer
@@ -36,7 +66,6 @@ displaycanvasctx.fillStyle ='white'
 displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 canvascontainer.append displaycanvaselem
 
-canvasobj = canvaselem[0].getContext "2d"
 #body.append canvaselem
 
 
@@ -74,6 +103,7 @@ displaycanvaselem.mousedown (e) ->
   if e.button == 2
     holdingright = true
     rdown e
+  draw mpos
 
 cancel = (e) ->
   if e.button == 0
@@ -90,6 +120,7 @@ correctpos = (e) ->
   y=e.pageY
   #penapi = wacom().penAPI
   #console.log penapi
+  ##don't really need subpixel precision currently
   #if penapi and penapi.isInProximity
   #  x = penapi.sysX
   #  y = penapi.sysY
@@ -98,23 +129,44 @@ correctpos = (e) ->
   offset = displaycanvaselem.offset()
   x-=offset.left
   y-=offset.top
-  if flipped then x = canvaselem.width()-x
-  x-- #border
-  y--
+  if flipped then x = displaycanvaselem.width()-x
   return V2d x,y
 
 color = rgba 0,0,0,1
 
 displaycanvaselem.bind 'contextmenu', (e) -> false
 
-rdown = (e) ->
-  mpos = correctpos e
-  imgd = canvasobj.getImageData mpos.x, mpos.y, 1, 1
+imgd = canvasobj.getImageData 0, 0, CANVASWIDTH, CANVASHEIGHT
+
+fuckpickcolor = ( ctx, pos ) ->
+  #imgd = canvasobj.getImageData 0, 0, CANVASWIDTH, CANVASHEIGHT
+  #imgd = ctx.getImageData pos.x, pos.y, 1, 1
+  i=pos.x+CANVASWIDTH*pos.y
+  i*=4
+  console.log i
+  r = imgd.data[i+0]
+  g = imgd.data[i+1]
+  b = imgd.data[i+2]
+  return rgba r, g, b, 1
+
+pickcolor = ( ctx, pos ) ->
+  imgd = displaycanvasctx.getImageData pos.x, pos.y, 1, 1
   r = imgd.data[0]
   g = imgd.data[1]
   b = imgd.data[2]
-  a = color.a
-  updatecolor rgba r, g, b, a
+  return rgba r, g, b, 1
+
+rdown = (e) ->
+  mpos = correctpos e
+  coleur = pickcolor canvasobj, mpos
+  coleur = adjustalpha coleur, color.a
+  updatecolor coleur
+  #imgd = canvasobj.getImageData mpos.x, mpos.y, 1, 1
+  #r = imgd.data[0]
+  #g = imgd.data[1]
+  #b = imgd.data[2]
+  #a = color.a
+  #updatecolor rgba r, g, b, a
 
 prev = undefined
 
@@ -154,10 +206,10 @@ updaterecentcolors = () ->
     updateswatches()
 
 switchcolor = () ->
-  c = recentcolors.shift()
-  recentcolors.push c
-  updateswatches()
-  updatecolor recentcolors[0]
+  #c = recentcolors.shift()
+  #recentcolors.push c
+  updatecolor recentcolors[1]
+  updaterecentcolors()
 
 bindings = {}
 keytapbind = ( key, func ) ->
@@ -172,8 +224,6 @@ $(document).bind 'keydown', (e) ->
   key = e.which
   if bindings.hasOwnProperty key
     bindings[key]()
-
-threshfraction = 0.5
 
 tabletmodifier = ( st ) ->
   penapi = wacom().penAPI
@@ -193,69 +243,181 @@ tabletmodifier = ( st ) ->
   if tabletaffectsopacity
     newalpha = c.a * adjustedopacitypressure
     c = adjustalpha c, newalpha
-  return from: f, to: t, width: w, color: c
+  newst= $.extend {}, st, from: f, to: t, width: w, color: c, brush: st.brush
+  if penapi.isEraser
+    newst.brush = 'eraser'
+  return newst
 
 draw = (mpos) ->
   if ( not isdrawing ) or displaycanvaselem.hasClass "disabled"
     prev = undefined
     lastdab = undefined
     return
-  #updaterecentcolors()
   penapi = wacom().penAPI
   if not prev then prev = mpos
   if prev
-    st = from: prev, to: mpos, width: maxradius, color: color
+    st = from: prev, to: mpos, width: maxradius, color: color, brush: currentbrush, layer: layers.current
     if penapi #and penapi.isInProximity
       st=tabletmodifier st
-    #threshold = r* threshfraction
     makestroke st
-    #if not lastdab
-    #  dab mpos, r, color
-    #  lastdab = x: mpos.x, y: mpos.y
-    #else
-    #  dabcount=vdist( lastdab, mpos )/threshold
-    #  if dabcount >= 1
-    #    max = Math.floor dabcount
-    #    dir=vsub mpos, lastdab
-    #    for i in [1..max]
-    #      c=i/max
-    #      offs=vnmul dir, c
-    #      tmppos = vadd lastdab, offs
-    #      dab tmppos, r, color
-    #    prev = mpos
-    #    lastdab = x: mpos.x, y: mpos.y
 
   prev = V2d mpos.x, mpos.y
 
-displaycanvaselem.click (e) ->
+displaycanvaselem.mousedown (e) ->
   updaterecentcolors()
 
 displaycanvaselem.mousemove (e) ->
   if holdingright
     rdown e
+body.mousemove (e) ->
   mpos = correctpos e
-  draw(mpos)
+  draw mpos
 
 csscolor = ( col ) ->
   "rgba(#{col.r},#{col.g},#{col.b},#{col.a})"
 
 olddrawstroke = ( st ) ->
+  tmpto = st.to
+  if st.from.x is st.to.x and st.from.y is st.to.y
+    tmpto = vadd st.to, V2d 0, 0.001
   canvasobj.strokeStyle = csscolor st.color
   canvasobj.lineWidth = st.width
   canvasobj.lineCap="round"
   canvasobj.beginPath()
   canvasobj.moveTo st.from.x, st.from.y
-  canvasobj.lineTo st.to.x, st.to.y
+  canvasobj.lineTo tmpto.x, tmpto.y
   canvasobj.stroke()
 
 clumps = ( arr, n ) ->
   (arr[i...i+n] for x,i in arr[0..arr.length-n])
 
-#if we find we're in a bind, we'll just make some shit up
+canvascircle = ( context, pos, r ) ->
+  context.beginPath()
+  context.arc pos.x, pos.y, r, 0, 2*Math.PI, false
+
+degstorads = (deg) -> (deg*Math.PI)/180
+
+drawellipse = ( ctx, pos, radius, rot, ratio  ) ->
+  ctx.save()
+  ctx.translate pos.x, pos.y
+  ctx.rotate rot
+  ctx.scale ratio, 1
+  canvascircle ctx, V2d(0,0), radius
+  ctx.fill()
+  ctx.restore()
+
+
+vmag = (v) -> Math.sqrt Math.pow(v.x,2)+Math.pow(v.y,2)
+vndiv = (v,n) -> V2d v.x/n, v.y/n
+vnorm = (v) -> vndiv v, vmag(v)
+
+rfloat = () ->  -1+Math.random()*2
+randdir = () -> vnorm V2d rfloat(), rfloat()
+randvector = () -> vnmul randdir(), Math.random()
+
+
+brushpresets = {}
+
+brushpresets.default = {
+  adjust: (st, pos, angle ) ->
+    jitter = 0
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 1
+    return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: st.color
+}
+brushpresets.eraser = {
+  adjust: (st, pos, angle ) ->
+    color = rgba 0,0,0,1
+    ellipseratio = 1
+    return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: color, erase: true
+}
+brushpresets.chalk = {
+  adjust: (st, pos, angle ) ->
+    jitter = 1/8
+    radius = st.width / 8
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 1
+    return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: st.color
+}
+brushpresets.spatter = {
+  adjust: (st, pos, angle ) ->
+    jitter = 1
+    radius = st.width*Math.random()/10
+    tmpcolor = st.color
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 1
+    return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
+brushpresets.noise = {
+  adjust: (st, pos, angle ) ->
+    jitter = 1
+    radius = st.width*Math.random()/10
+    tmpcolor = pickcolor canvasobj, pos
+    tmpcolor = adjustalpha tmpcolor, 1
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 1
+    return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
+brushpresets.smudge = {
+  adjust: (st, pos, angle ) ->
+    jitter = 0
+    tmpcolor = pickcolor canvasobj, pos
+    tmpcolor = adjustalpha tmpcolor, 0.1
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 1
+    return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
+brushpresets.wetpaint = {
+  adjust: (st, pos, angle ) ->
+    jitter = 0
+    tmpcolor = pickcolor canvasobj, pos
+    tmpcolor = adjustalpha tmpcolor, 0.5
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 0.4
+    return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
+brushpresets.bristles = {
+  adjust: (st, pos, angle ) ->
+    speed = vmag vsub st.to, st.from
+    jitter = 1/2
+    tmpcolor = st.color
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 0.1
+    radius=st.width*2/3
+    angle += Math.PI/2
+    return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
+
 experimentaldrawstroke = ( st ) ->
+  layers.change st.layer or 0
+  radiusperdab = 1/20
+  threshold = st.width*radiusperdab
+  FRAC=vdist( st.from, st.to )/(st.width)
+  dabcount=Math.ceil vdist( st.from, st.to )/threshold
+  dabcount = Math.max 2,dabcount
+  #auhgh tihs is too slow
+  Math.seedrandom st.brush+String(st.to.x)+String(st.to.y)+String(st.from.x)+String(st.from.y)+String(dabcount)
+  dir=vsub st.to, st.from
+  dabz=[0..dabcount].map (n) ->
+    c=n/dabcount
+    offs = vnmul dir,c
+    return vadd st.from, offs
+  strokediff=vsub st.from, st.to
+  strokedirection = Math.atan2 strokediff.y, strokediff.x
+  brush = brushpresets[st.brush] or brushpresets.default
+  dabz.forEach (dab) ->
+    #if st.erase then canvasobj.globalCompositeOperation = 'destination-out'
+    newdab = brush.adjust( st, dab, strokedirection )
+    canvasobj.fillStyle = csscolor newdab.color
+    if newdab.erase then canvasobj.globalCompositeOperation = 'destination-out'
+    drawellipse canvasobj, newdab.pos, newdab.radius, newdab.angle, newdab.ellipseratio
+    canvasobj.globalCompositeOperation = 'source-over'
+  canvasobj.globalCompositeOperation = 'source-over'
+
+oldexperimentaldrawstroke = ( st ) ->
   alphafrac = 1/2
   radiusperdab = 1/20
-  if st.color.a is 1 then return olddrawstroke st
+  #if st.color.a is 1 then return olddrawstroke st
   threshold = st.width*radiusperdab
   FRAC=vdist( st.from, st.to )/(st.width)
   dabcount=Math.ceil vdist( st.from, st.to )/threshold
@@ -272,6 +434,8 @@ experimentaldrawstroke = ( st ) ->
   for cd in clumpdab
     tmpst = from: cd[0], to: cd[1], color: tmpcol, width: st.width
     drawline canvasobj, tmpst
+    #canvasobj.fillStyle = csscolor tmpcol
+    #ellipse canvasobj, tmpst.from, tmpst.width
   #if dabcount >= 1
   #  for i in [1..dabcount]
   #    c=i/max
@@ -327,7 +491,8 @@ makestroke = ( st ) ->
   r = st.width
   col = st.color
   #drawstroke( from, to, r, col )
-  strokedata = color: col, width: r, from: from, to: to
+  #strokedata = color: col, width: r, from: from, to: to,
+  strokedata = st
   cache.push strokedata
   replaytick()
   if socket
@@ -356,13 +521,11 @@ label = (str) -> $ tag "label", str
 toolbar.append header "brush"
 toolbar.append container = $ "<div>"
 
-WEDABSNOW = false
-if WEDABSNOW
-  container.append label "spacing"
-  spacingslider = $ "<div></div>"
-  spacingslider.slider min: 1/20, max: 2, step: 1/100, slide: (e,ui) ->
-    threshfraction = ui.value
-  container.append spacingslider
+container.append brushselection= $ "<select>"
+for k,v of brushpresets
+  brushselection.append tag "option", k
+brushselection.change (e) ->
+  currentbrush = this.value
 
 container.append label "size"
 radiusslider = $ "<div></div>"
@@ -393,13 +556,14 @@ colorpicker.addClass 'colorpicker'
 colorslider = ->
   sliderelem = $ "<div>"
   sliderelem.slider min: 1, max: 255, range: 'min'
+  sliderelem.css height: 50, display: 'inline-block'
   return sliderelem
 
-redslider = colorslider().slider slide: (e,ui) ->
+redslider = colorslider().slider orientation: 'vertical', slide: (e,ui) ->
   updatecolor rgba ui.value, color.g, color.b, color.a
-greenslider = colorslider().slider slide: (e,ui) ->
+greenslider = colorslider().slider orientation: 'vertical', slide: (e,ui) ->
   updatecolor rgba color.r, ui.value, color.b, color.a
-blueslider = colorslider().slider slide: (e,ui) ->
+blueslider = colorslider().slider orientation: 'vertical', slide: (e,ui) ->
   updatecolor rgba color.r, color.g, ui.value, color.a
 redslider.addClass 'red'
 greenslider.addClass 'green'
@@ -410,7 +574,7 @@ alphaslider.slider min: 0, max: 1, step: 0.01, value: 1, slide: (e,ui) ->
 
 colorbox = $ "<div>&nbsp;</div>"
 colorpicker.append colorbox
-colorbox.css height: 53, width: 20, float: 'right'
+colorbox.css height: 32, width: 32, float: 'right'
 
 
 colorpicker.append redslider, greenslider, blueslider, alphaslider
@@ -427,12 +591,19 @@ updatecolor = ( col ) ->
   alphaslider.slider value: color.a
   colorbox.css "background", csscolor color
   colorwheel.color csscolor color
+spuncolorwheel = ( col ) ->
+  color = col
+  redslider.slider value: color.r
+  greenslider.slider value: color.g
+  blueslider.slider value: color.b
+  alphaslider.slider value: color.a
+  colorbox.css "background", csscolor color
 
 round=Math.round
 noop = ->
-colorwheel.ondrag noop, (rcol) ->
+colorwheel.onchange (rcol) ->
   nc = rgba round(rcol.r), round(rcol.g), round(rcol.b), color.a
-  updatecolor nc
+  spuncolorwheel nc
 
 swatches = $ "<div></div>"
 colorpicker.append swatches
@@ -449,12 +620,11 @@ updateswatches = ->
  swatches.append x
 
 clearctx = (ctx) ->
-  ctx.fillStyle ='white'
-  ctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
+  ctx.clearRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 
 clearcanvas = ->
-  canvasobj.fillStyle ='white'
-  canvasobj.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
+  alllayers.forEach (layer) ->
+    clearctx layer.canvas.getContext '2d'
 
 lastframe = 0
 
@@ -494,14 +664,24 @@ cursoroncanvas=false
 displaycanvaselem.mouseenter -> cursoroncanvas=true
 displaycanvaselem.mouseout -> cursoroncanvas=false
 
+networkcursors = []
+
+assembleimg = () ->
+  displaycanvasctx.fillstyle = 'white'
+  displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
+  alllayers.forEach (layer) ->
+    if layer.visible then displaycanvasctx.drawImage layer.canvas, 0, 0
+
 drawloop = ->
   if not paused
     times = timecall -> replaytick lastframe
-  clearctx displaycanvasctx
-  displaycanvasctx.drawImage canvaselem[0], 0, 0
+  assembleimg()
   setTimeout drawloop, times
   if cursoroncanvas
     drawcursor mpos, color, maxradius
+    drawcursor mpos, color, minradius
+  networkcursors.forEach (c) -> c()
+  networkcursors=[]
 
 drawcursor = ( pos, col, rad ) ->
   dcc=displaycanvasctx
@@ -564,7 +744,7 @@ loadsession = ->
     )
     , 'json'
 
-toolbar.append header "tablet (wacom)"
+toolbar.append header "tablet (wacom driver)"
 toolbar.append container = $ "<div>"
 container.append label "pressure affects..."
 container.append $ "<input type=checkbox id=pressure /><label for=pressure>size</label>"
@@ -581,7 +761,8 @@ toolbar.append container = $ "<div>"
 
 container.append label "export "
 exportpng = ->
-  url=canvaselem.get(0).toDataURL("image/png")
+  assembleimg()
+  url=displaycanvaselem.get(0).toDataURL("image/png")
 
   window.open url
 
@@ -634,18 +815,35 @@ flipbutton.click toggleflip
 flipbutton.button()
 container.append flipbutton
 
+
+container.append layerlist = $ "<div>"
+layerlist.append $ tag 'h3', 'layers'
+#alllayers.forEach (layer) ->
+alllayers.forEach ( layer, index ) ->
+  layerlist.append but=$ tag "button", "toggle"
+  but.click -> layer.visible = not layer.visible
+  layerlist.append layer.canvas
+  $(layer.canvas).css 'max-width': 100
+  $(layer.canvas).click -> layers.change index
+
 keytapbind 'i', toggleflip
+
+bombsahoy = () ->
+  cache = []
+  startreplay()
+  log "BOMBS AHOY"
 
 bombbutton = $ tag "button", "BOMB"
 bombbutton.click ->
   if not ( confirm('really?') and confirm "are you super sure? this will nuke the contents of the canvas straight off the face of the earth" ) then return false
-  cache = []
-  startreplay()
+  bombsahoy()
   socket.emit 'bomb'
   return false
 bombbutton.button()
 bombbutton.css 'font-size': 10, 'margin-top': 20, color: 'darkred', display: 'block'
 container.append bombbutton
+container.append ll=label "big friendly global thermonuclear annihilation button, pressing it will destroy the canvas contents"
+ll.css color: 'gray'
 
 # wee woo copy pasted code alert
 $.fn.togglepanels = ->
@@ -766,8 +964,8 @@ timelog = (time,text) ->
 htmlencode = (str) ->
   String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-someonesaid = ( time, name, text ) ->
-  time = new Date time
+someonesaid = ( timems, name, text ) ->
+  time = new Date timems
   timelog time, "#{htmlencode name}> #{htmlencode text}<br/>\n"
 
 chatname = false
@@ -776,7 +974,7 @@ say = ( text ) ->
     chatname = prompt "pick a name", 'anon'
   if not chatname then return
   text=chatinput.val()
-  time=Date.now()
+  time=new Date().getTime()
   someonesaid time, chatname, text
   socket.emit 'say', { name: chatname, text: text, time: time }
 
@@ -818,14 +1016,15 @@ $(document).ready ->
   drawloop()
   brushsizedelta 0
   updateswatches()
-  socket = io.connect '/'
-  socket.on 'stroke', (data) ->
-    cache.push data
-  socket.on 'say', (data) ->
-    someonesaid data.time, data.name, data.text 
-  socket.on 'bomb', (data) ->
-    cache = []
-    startreplay()
+  if NETWORKED
+    socket = io.connect '/'
+    socket.on 'stroke', (data) ->
+      cache.push data
+      networkcursors.push -> drawcursor data.to, rgba(0,0,0,1/2), data.width
+    socket.on 'say', (data) ->
+      someonesaid data.time, data.name, data.text 
+    socket.on 'bomb', (data) ->
+      bombsahoy()
 
 drawpixel = ( ctx, x, y, col ) ->
   ctx.fillStyle = csscolor col
@@ -983,3 +1182,4 @@ FUCK = ->
       radiuserror+=2*(y-x+1)
 
 updatecolor rgba 0, 0, 0, 1
+

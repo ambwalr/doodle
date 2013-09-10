@@ -42,6 +42,7 @@ io.sockets.on 'connection', (socket) ->
     cache.push data
     socket.broadcast.emit 'stroke', data
   socket.on 'say', (data) ->
+    data.time = new Date().getTime()
     chatlog.push data
     while chatlog.length > 10
       chatlog.shift()

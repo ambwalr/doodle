@@ -11,6 +11,10 @@ canvas.disabled
 {
   cursor: wait;
 }
+canvas:active
+{
+  cursor: none
+}
 
 .ui-dialog, #toolbar
 {
@@ -71,4 +75,9 @@ body {
 #toolbar
 {
   padding: 0 4;
+}
+
+.selectedlayer
+{
+  border-color: yellow !important;
 }
