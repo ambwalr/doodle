@@ -22,24 +22,29 @@ class Layer
     jqnew.css border: '1px solid black'
     @canvas=jqnew[0]
 
-alllayers = [ new Layer(), new Layer(), new Layer() ]
 
 canvaselem = false
 canvasobj = false
 
 layers = {}
+layers.list = []
 layers.current = 0
-layers.change = ( layernumber ) ->
-  alllayers.forEach ( layer ) ->
-    $(layer.canvas).removeClass 'selectedlayer'
+layers.refresh = () ->
+  layers.changeforreal layers.current
+layers.changeforreal = ( layernumber ) ->
   layers.current = layernumber
-  console.log layernumber
-  lay = alllayers[layernumber]
+  layers.change(layernumber)
+layers.change = ( layernumber ) ->
+  layers.list.forEach ( layer ) ->
+    $(layer.canvas).removeClass 'selectedlayer'
+  lay = layers.list[layernumber]
   canvaselem = $(lay.canvas)
   canvaselem.addClass 'selectedlayer'
   canvasobj = lay.canvas.getContext "2d"
 
-layers.change 0
+layers.list = [0..2].map -> new Layer()
+
+layers.changeforreal 0
 
 contain = $ "<div>"
 contain.resizable handles: 's' # grid: 50
@@ -143,13 +148,13 @@ fuckpickcolor = ( ctx, pos ) ->
   #imgd = ctx.getImageData pos.x, pos.y, 1, 1
   i=pos.x+CANVASWIDTH*pos.y
   i*=4
-  console.log i
   r = imgd.data[i+0]
   g = imgd.data[i+1]
   b = imgd.data[i+2]
   return rgba r, g, b, 1
 
 pickcolor = ( ctx, pos ) ->
+  assembleimg()
   imgd = displaycanvasctx.getImageData pos.x, pos.y, 1, 1
   r = imgd.data[0]
   g = imgd.data[1]
@@ -348,6 +353,23 @@ brushpresets.spatter = {
     ellipseratio = 1
     return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
 }
+brushpresets.bristles = {
+  adjust: (st, pos, angle ) ->
+    speed = vmag vsub st.to, st.from
+    jitter = 1/2
+    tmpcolor = st.color
+    pos = vadd pos, vnmul randvector(), jitter*st.width
+    ellipseratio = 0.1
+    radius=st.width*2/3
+    angle += Math.PI/2
+    return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
+brushpresets.directionalbrush = {
+  adjust: (st, pos, angle ) ->
+    tmpcolor = st.color
+    ellipseratio = 0.1
+    return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
+}
 brushpresets.noise = {
   adjust: (st, pos, angle ) ->
     jitter = 1
@@ -376,29 +398,18 @@ brushpresets.wetpaint = {
     ellipseratio = 0.4
     return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
 }
-brushpresets.bristles = {
-  adjust: (st, pos, angle ) ->
-    speed = vmag vsub st.to, st.from
-    jitter = 1/2
-    tmpcolor = st.color
-    pos = vadd pos, vnmul randvector(), jitter*st.width
-    ellipseratio = 0.1
-    radius=st.width*2/3
-    angle += Math.PI/2
-    return pos: pos, radius: radius, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
-}
 
 experimentaldrawstroke = ( st ) ->
   layers.change st.layer or 0
-  radiusperdab = 1/20
+  radiusperdab = 1/3
   threshold = st.width*radiusperdab
   FRAC=vdist( st.from, st.to )/(st.width)
   dabcount=Math.ceil vdist( st.from, st.to )/threshold
   dabcount = Math.max 2,dabcount
   #auhgh tihs is too slow
-  Math.seedrandom st.brush+String(st.to.x)+String(st.to.y)+String(st.from.x)+String(st.from.y)+String(dabcount)
+  #Math.seedrandom st.brush+String(st.to.x)+String(st.to.y)+String(st.from.x)+String(st.from.y)+String(dabcount)
   dir=vsub st.to, st.from
-  dabz=[0..dabcount].map (n) ->
+  dabz=[1..dabcount].map (n) ->
     c=n/dabcount
     offs = vnmul dir,c
     return vadd st.from, offs
@@ -413,6 +424,7 @@ experimentaldrawstroke = ( st ) ->
     drawellipse canvasobj, newdab.pos, newdab.radius, newdab.angle, newdab.ellipseratio
     canvasobj.globalCompositeOperation = 'source-over'
   canvasobj.globalCompositeOperation = 'source-over'
+  layers.refresh()
 
 oldexperimentaldrawstroke = ( st ) ->
   alphafrac = 1/2
@@ -481,10 +493,6 @@ drawstroke = ( st ) ->
   else
     drawhardlinewidth canvasobj, st.from, st.to, st.color, st.width/2
 
-noop = ->
-handler = ( data, jblerf ) ->
-  #console.log data
-
 makestroke = ( st ) ->
   from = st.from
   to = st.to
@@ -526,9 +534,11 @@ for k,v of brushpresets
   brushselection.append tag "option", k
 brushselection.change (e) ->
   currentbrush = this.value
+brushselection.css 'display': 'block'
 
-container.append label "size"
-radiusslider = $ "<div></div>"
+container.append lab= label "size"
+lab.attr 'for': 'radiusslider'
+radiusslider = $ "<div id=radiusslider></div>"
 radiusslider.slider min: ABSMINRADIUS, max: ABSMAXRADIUS, range: true, slide: (e,ui) ->
   minradius = ui.values[0]
   maxradius = ui.values[1]
@@ -548,10 +558,16 @@ brushsizedown = ->
 keytapbind 'z', brushsizedown
 keytapbind 'a', brushsizeup
 
+container.append label 'opacity'
+
+alphaslider = $ "<div>"
+alphaslider.slider min: 0, max: 1, step: 0.01, value: 1, slide: (e,ui) ->
+  updatecolor rgba color.r, color.g, color.b, ui.value
+container.append alphaslider
+
 toolbar.append header "color"
 toolbar.append colorpicker = $ "<div>"
 colorpicker.addClass 'colorpicker'
-
 
 colorslider = ->
   sliderelem = $ "<div>"
@@ -568,19 +584,23 @@ blueslider = colorslider().slider orientation: 'vertical', slide: (e,ui) ->
 redslider.addClass 'red'
 greenslider.addClass 'green'
 blueslider.addClass 'blue'
-alphaslider = $ "<div>"
-alphaslider.slider min: 0, max: 1, step: 0.01, value: 1, slide: (e,ui) ->
-  updatecolor rgba color.r, color.g, color.b, ui.value
 
 colorbox = $ "<div>&nbsp;</div>"
-colorpicker.append colorbox
 colorbox.css height: 32, width: 32, float: 'right'
 
 
-colorpicker.append redslider, greenslider, blueslider, alphaslider
+colorpicker.append "<ul><li><a href='#rgbpick'>rgb</a></li><li><a href='#wheelpick'>wheel</a></li></ul>"
 
-colorpicker.append colorwheeldom = $ "<div>"
+colorpicker.append rgbpicker = $ "<div id=rgbpick>"
+rgbpicker.append colorbox
+colorpicker.addClass 'colorpicker'
+rgbpicker.append redslider, greenslider, blueslider
+
+
+colorpicker.append colorwheeldom = $ "<div id=wheelpick>"
 colorwheel = Raphael.colorwheel colorwheeldom, 128
+
+colorpicker.tabs()
 
 updatecolor = ( col ) ->
   #color = r: r, g: g, b: b, a: a
@@ -600,7 +620,6 @@ spuncolorwheel = ( col ) ->
   colorbox.css "background", csscolor color
 
 round=Math.round
-noop = ->
 colorwheel.onchange (rcol) ->
   nc = rgba round(rcol.r), round(rcol.g), round(rcol.b), color.a
   spuncolorwheel nc
@@ -623,7 +642,7 @@ clearctx = (ctx) ->
   ctx.clearRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 
 clearcanvas = ->
-  alllayers.forEach (layer) ->
+  layers.list.forEach (layer) ->
     clearctx layer.canvas.getContext '2d'
 
 lastframe = 0
@@ -651,13 +670,13 @@ replaytick = ->
   if lastframe == cache.length
     if nocache and cache.length > 100 then clearlocalcache()
     enablecanvas()
+  starttime = Date.now()
   if cache.length > lastframe
-    for x in [0..strokespertick]
-      if cache.length > lastframe
-        curr = cache[lastframe]
-        drawstroke curr
-        #drawdab curr.p, curr.r, curr.c
-        lastframe++
+    #for x in [0..strokespertick]
+    curr = cache[lastframe]
+    drawstroke curr
+    #drawdab curr.p, curr.r, curr.c
+    lastframe++
   timebar.progressbar value: lastframe, max: cache.length
 
 cursoroncanvas=false
@@ -667,21 +686,23 @@ displaycanvaselem.mouseout -> cursoroncanvas=false
 networkcursors = []
 
 assembleimg = () ->
-  displaycanvasctx.fillstyle = 'white'
+  clearctx displaycanvasctx
+  displaycanvasctx.fillStyle='white'
   displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
-  alllayers.forEach (layer) ->
+  layers.list.forEach (layer) ->
     if layer.visible then displaycanvasctx.drawImage layer.canvas, 0, 0
 
 drawloop = ->
+  idealms=10
   if not paused
     times = timecall -> replaytick lastframe
   assembleimg()
-  setTimeout drawloop, times
   if cursoroncanvas
     drawcursor mpos, color, maxradius
     drawcursor mpos, color, minradius
   networkcursors.forEach (c) -> c()
   networkcursors=[]
+  setTimeout drawloop, (idealms/strokespertick)
 
 drawcursor = ( pos, col, rad ) ->
   dcc=displaycanvasctx
@@ -703,7 +724,7 @@ tolast = ->
 
 skipbutton = $ "<button>\"skip\" replay (may cause a huge delay)</button>"
 skipbutton.click skipreplay
-skipbutton.button()
+skipbutton.button icons: { primary: "ui-icon-seek-end" }, text: true
 
 #loadbutton = $ "<button>(re)load session</button>"
 #loadbutton.click -> loadsession()
@@ -721,7 +742,7 @@ loadarchivedsession = (url) ->
       startreplay()
     )
     , 'json'
-archivebutton = $ "<button>view an archived session</button>"
+archivebutton = $ tag "button", "view an archived session"
 archivebutton.click ->
   alert "keep in mind this just affects your local replay, any new doodling that happens wll be sent to the current active session \n  TODO: fix this"
   loadarchivedsession archiveurl
@@ -770,7 +791,7 @@ keytapbind 'p', exportpng
 keytapbind 'r', startreplay
 
 
-savebutton = $ tag "button", ".png"
+savebutton = $ tag "button", ".png snapshot"
 
 savebutton.click -> exportpng()
 savebutton.button()
@@ -818,13 +839,13 @@ container.append flipbutton
 
 container.append layerlist = $ "<div>"
 layerlist.append $ tag 'h3', 'layers'
-#alllayers.forEach (layer) ->
-alllayers.forEach ( layer, index ) ->
+layers.list.forEach ( layer, index ) ->
   layerlist.append but=$ tag "button", "toggle"
+  but.button { icons: { primary: "ui-icon-lightbulb" }, text: false }
   but.click -> layer.visible = not layer.visible
   layerlist.append layer.canvas
   $(layer.canvas).css 'max-width': 100
-  $(layer.canvas).click -> layers.change index
+  $(layer.canvas).click -> layers.changeforreal index
 
 keytapbind 'i', toggleflip
 
@@ -887,12 +908,12 @@ replaycontrols.css clear: 'left'
 body.append replaycontrols
 
 pausebutton = $ "<button>pause/unpause replay</button>"
-pausebutton.button()
+pausebutton.button icons: { primary: "ui-icon-pause" }, text: true
 pausebutton.click ->
   paused=not paused
 
 replaybutton = $ "<button>restart replay</button>"
-replaybutton.button()
+replaybutton.button icons: { primary: "ui-icon-seek-first" }, text: true
 replaybutton.click startreplay
 
 replayspeed.css 'margin': 5, float: 'left'
@@ -928,8 +949,8 @@ listdata = [ "i - flip canvas", "a/z - change brush size", "x - swap color", "p 
 $("#hotkeyinfo").append "Hold alt and press one of the following:\n"+tag "ul", listdata.join("")
 $("#hotkeyinfo").hide()
 
-replaycontrols.append but = $ "<button>hotkey info</button>"
-but.button()
+replaycontrols.append but = $ tag "button", "hotkey info"
+but.button icons: { primary: "ui-icon-help" }, text: true
 but.click -> $("#hotkeyinfo").dialog()
 
 replaycontrols.append timebar
@@ -966,7 +987,11 @@ htmlencode = (str) ->
 
 someonesaid = ( timems, name, text ) ->
   time = new Date timems
-  timelog time, "#{htmlencode name}> #{htmlencode text}<br/>\n"
+  oldrandom=Math.random
+  Math.seedrandom name
+  hue = Math.random()*360
+  Math.random=oldrandom
+  timelog time, "<span style=\"color: hsl(#{hue},50%,50%)\">#{htmlencode name}></span> #{htmlencode text}<br/>\n"
 
 chatname = false
 say = ( text ) ->

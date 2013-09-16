@@ -76,8 +76,16 @@ body {
 {
   padding: 0 4;
 }
+#toolbar button
+{
+  resize: none;
+}
 
 .selectedlayer
 {
   border-color: yellow !important;
+}
+.ui-tabs .ui-tabs-panel
+{
+  padding: 0;
 }
