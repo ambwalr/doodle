@@ -13,38 +13,7 @@ ABSMAXRADIUS = 100
 paused = false
 currentbrush = 'default'
 
-class Layer
-  constructor: () ->
-    @visible=true
-    @strokes=[]
-    jqnew=$ "<canvas>"
-    jqnew.attr width: CANVASWIDTH, height: CANVASHEIGHT
-    jqnew.css border: '1px solid black'
-    @canvas=jqnew[0]
-
-
-canvaselem = false
 canvasobj = false
-
-layers = {}
-layers.list = []
-layers.current = 0
-layers.refresh = () ->
-  layers.changeforreal layers.current
-layers.changeforreal = ( layernumber ) ->
-  layers.current = layernumber
-  layers.change(layernumber)
-layers.change = ( layernumber ) ->
-  layers.list.forEach ( layer ) ->
-    $(layer.canvas).removeClass 'selectedlayer'
-  lay = layers.list[layernumber]
-  canvaselem = $(lay.canvas)
-  canvaselem.addClass 'selectedlayer'
-  canvasobj = lay.canvas.getContext "2d"
-
-layers.list = [0..2].map -> new Layer()
-
-layers.changeforreal 0
 
 contain = $ "<div>"
 contain.resizable handles: 's' # grid: 50
@@ -62,17 +31,12 @@ body.append contain
 contain.append canvascontainer
 
 displaycanvaselem.attr height: CANVASHEIGHT
-canvaselem.attr height: CANVASHEIGHT
 displaycanvaselem.attr width: CANVASWIDTH
-canvaselem.attr width: CANVASWIDTH
 
 displaycanvasctx = displaycanvaselem[0].getContext "2d"
 displaycanvasctx.fillStyle ='white'
 displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 canvascontainer.append displaycanvaselem
-
-#body.append canvaselem
-
 
 tag = ( type="div", body="" ) -> "<#{type}>#{body}</#{type}>"
 dataurl = (data) -> "data:image/svg+xml;base64,"+btoa data
@@ -80,8 +44,6 @@ dataurl = (data) -> "data:image/svg+xml;base64,"+btoa data
 wacom = -> document.getElementById 'wtPlugin'
 tabletaffectsradius = false
 tabletaffectsopacity = false
-
-antialias = true
 
 isdrawing = false
 holdingright = false
@@ -92,7 +54,6 @@ cache = []
 V2d = (x,y) -> x: x, y: y
 mpos = V2d 0,0
 
-
 rgba = ( r, g, b, a ) -> r: r, g: g, b: b, a: a
 adjustalpha = ( col, alpha ) ->
   rgba col.r, col.g, col.b, alpha
@@ -100,6 +61,21 @@ adjustalpha = ( col, alpha ) ->
 recentcolors = [ rgba(0,0,0,1), rgba(255,255,255,1), rgba(255,0,0,1), rgba(255,130,110,1) ]
 
 socket = undefined
+
+stage = new PIXI.Stage 0xFFFFFF, true
+#stage.setInteractive true
+
+transparent = true
+antialias = true
+
+renderer = new PIXI.autoDetectRenderer CANVASWIDTH, CANVASHEIGHT, null, transparent, antialias
+
+canvascontainer.append renderer.view
+
+displaycanvaselem.hide()
+displaycanvaselem = $(renderer.view)
+
+canvasobj = renderer.view.getContext '2d'
 
 displaycanvaselem.mousedown (e) ->
   if e.button == 0
@@ -116,7 +92,7 @@ cancel = (e) ->
   if e.button == 2
     holdingright = false
 
-canvaselem.mouseup cancel
+displaycanvaselem.mouseup cancel
 body.mouseup cancel
 
 correctpos = (e) ->
@@ -141,37 +117,15 @@ color = rgba 0,0,0,1
 
 displaycanvaselem.bind 'contextmenu', (e) -> false
 
-imgd = canvasobj.getImageData 0, 0, CANVASWIDTH, CANVASHEIGHT
-
-fuckpickcolor = ( ctx, pos ) ->
-  #imgd = canvasobj.getImageData 0, 0, CANVASWIDTH, CANVASHEIGHT
-  #imgd = ctx.getImageData pos.x, pos.y, 1, 1
-  i=pos.x+CANVASWIDTH*pos.y
-  i*=4
-  r = imgd.data[i+0]
-  g = imgd.data[i+1]
-  b = imgd.data[i+2]
-  return rgba r, g, b, 1
-
 pickcolor = ( ctx, pos ) ->
-  assembleimg()
-  imgd = displaycanvasctx.getImageData pos.x, pos.y, 1, 1
-  r = imgd.data[0]
-  g = imgd.data[1]
-  b = imgd.data[2]
-  return rgba r, g, b, 1
+  #TODO FIXME
+  return rgba 0, 0, 0, 1
 
 rdown = (e) ->
   mpos = correctpos e
   coleur = pickcolor canvasobj, mpos
   coleur = adjustalpha coleur, color.a
   updatecolor coleur
-  #imgd = canvasobj.getImageData mpos.x, mpos.y, 1, 1
-  #r = imgd.data[0]
-  #g = imgd.data[1]
-  #b = imgd.data[2]
-  #a = color.a
-  #updatecolor rgba r, g, b, a
 
 prev = undefined
 
@@ -261,7 +215,7 @@ draw = (mpos) ->
   penapi = wacom().penAPI
   if not prev then prev = mpos
   if prev
-    st = from: prev, to: mpos, width: maxradius, color: color, brush: currentbrush, layer: layers.current
+    st = from: prev, to: mpos, width: maxradius, color: color, brush: currentbrush
     if penapi #and penapi.isInProximity
       st=tabletmodifier st
     makestroke st
@@ -281,36 +235,10 @@ body.mousemove (e) ->
 csscolor = ( col ) ->
   "rgba(#{col.r},#{col.g},#{col.b},#{col.a})"
 
-olddrawstroke = ( st ) ->
-  tmpto = st.to
-  if st.from.x is st.to.x and st.from.y is st.to.y
-    tmpto = vadd st.to, V2d 0, 0.001
-  canvasobj.strokeStyle = csscolor st.color
-  canvasobj.lineWidth = st.width
-  canvasobj.lineCap="round"
-  canvasobj.beginPath()
-  canvasobj.moveTo st.from.x, st.from.y
-  canvasobj.lineTo tmpto.x, tmpto.y
-  canvasobj.stroke()
-
 clumps = ( arr, n ) ->
   (arr[i...i+n] for x,i in arr[0..arr.length-n])
 
-canvascircle = ( context, pos, r ) ->
-  context.beginPath()
-  context.arc pos.x, pos.y, r, 0, 2*Math.PI, false
-
 degstorads = (deg) -> (deg*Math.PI)/180
-
-drawellipse = ( ctx, pos, radius, rot, ratio  ) ->
-  ctx.save()
-  ctx.translate pos.x, pos.y
-  ctx.rotate rot
-  ctx.scale ratio, 1
-  canvascircle ctx, V2d(0,0), radius
-  ctx.fill()
-  ctx.restore()
-
 
 vmag = (v) -> Math.sqrt Math.pow(v.x,2)+Math.pow(v.y,2)
 vndiv = (v,n) -> V2d v.x/n, v.y/n
@@ -319,7 +247,6 @@ vnorm = (v) -> vndiv v, vmag(v)
 rfloat = () ->  -1+Math.random()*2
 randdir = () -> vnorm V2d rfloat(), rfloat()
 randvector = () -> vnmul randdir(), Math.random()
-
 
 brushpresets = {}
 
@@ -399,13 +326,31 @@ brushpresets.wetpaint = {
     return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
 }
 
-experimentaldrawstroke = ( st ) ->
-  layers.change st.layer or 0
+pixicolor = (rgba) ->
+  return rgba.r*256*256+rgba.g*256+rgba.b
+  #*0x000001
+
+jqbrush = $ "<canvas>"
+jqbrush.attr width: 32, height: 32
+brushcanvas = jqbrush.get(0)
+context=brushcanvas.getContext '2d'
+context.beginPath()
+rad=16
+context.arc 0, 0, rad, 0, 2*Math.PI, false
+context.fillStyle = 'orange'
+context.fill()
+
+
+brushtexture = PIXI.Texture.fromCanvas brushcanvas
+
+drawstroke = ( st ) ->
+  #stage = new PIXI.Stage 0xFFFFFF, true
   radiusperdab = 1/3
   threshold = st.width*radiusperdab
   FRAC=vdist( st.from, st.to )/(st.width)
   dabcount=Math.ceil vdist( st.from, st.to )/threshold
   dabcount = Math.max 2,dabcount
+  #fuck
   #auhgh tihs is too slow
   #Math.seedrandom st.brush+String(st.to.x)+String(st.to.y)+String(st.from.x)+String(st.from.y)+String(dabcount)
   dir=vsub st.to, st.from
@@ -417,81 +362,22 @@ experimentaldrawstroke = ( st ) ->
   strokedirection = Math.atan2 strokediff.y, strokediff.x
   brush = brushpresets[st.brush] or brushpresets.default
   dabz.forEach (dab) ->
-    #if st.erase then canvasobj.globalCompositeOperation = 'destination-out'
     newdab = brush.adjust( st, dab, strokedirection )
-    canvasobj.fillStyle = csscolor newdab.color
-    if newdab.erase then canvasobj.globalCompositeOperation = 'destination-out'
-    drawellipse canvasobj, newdab.pos, newdab.radius, newdab.angle, newdab.ellipseratio
-    canvasobj.globalCompositeOperation = 'source-over'
-  canvasobj.globalCompositeOperation = 'source-over'
-  layers.refresh()
-
-oldexperimentaldrawstroke = ( st ) ->
-  alphafrac = 1/2
-  radiusperdab = 1/20
-  #if st.color.a is 1 then return olddrawstroke st
-  threshold = st.width*radiusperdab
-  FRAC=vdist( st.from, st.to )/(st.width)
-  dabcount=Math.ceil vdist( st.from, st.to )/threshold
-  dabcount = Math.max 2,dabcount
-  #if dabcount < 2 then return olddrawstroke st
-  dir=vsub st.to, st.from
-  dabz=[0..dabcount].map (n) ->
-    c=n/dabcount
-    offs = vnmul dir,c
-    return vadd st.from, offs
-  clumpdab = clumps dabz, 2
-  #clumpdab.push clumpdab[0]
-  tmpcol = adjustalpha st.color, st.color.a*alphafrac  #/ Math.pow FRAC, Math.E #st.color.a/20  #Math.pow st.color.a, Math.E #natural logarithm yo
-  for cd in clumpdab
-    tmpst = from: cd[0], to: cd[1], color: tmpcol, width: st.width
-    drawline canvasobj, tmpst
-    #canvasobj.fillStyle = csscolor tmpcol
-    #ellipse canvasobj, tmpst.from, tmpst.width
-  #if dabcount >= 1
-  #  for i in [1..dabcount]
-  #    c=i/max
-  #    offs=vnmul dir, c
-  #    tmpfrom = st.from
-  #    tmpto = vadd st.from, offs
-  #    tmpst = from: tmpfrom, to: tmpto, color: color, width: width
-  #    drawline canvasobj, tmpst
-  #  prev = mpos
-  #  lastdab = x: mpos.x, y: mpos.y
-
-drawline = ( canvasobj, st ) ->
-  canvasobj.strokeStyle = csscolor st.color
-  canvasobj.lineWidth = st.width
-  canvasobj.lineCap="round"
-  canvasobj.beginPath()
-  canvasobj.moveTo st.from.x, st.from.y
-  canvasobj.lineTo st.to.x, st.to.y
-  canvasobj.stroke()
-
-drawdab = ( st ) ->
-  #threshfraction = 1/2
-  #threshold = st.width*threshfraction
-  #if not lastdab
-  #  dab mpos, r, color
-  #  lastdab = x: mpos.x, y: mpos.y
-  #else
-  #dabcount=vdist( st.from, mpos )/threshold
-  #dir=vsub st.to, st.from
-  #dabcount = vmag(dir)
-  #if dabcount >= 1
-  #  max = Math.floor dabcount
-  #  for i in [0..max]
-  #    c=i/max
-  #    offs=vnmul dir, c
-  #    tmppos = vadd st.from, offs
-  #    drawhardfilledcircle canvasobj, tmppos, st.width/2, st.color
-
-drawstroke = ( st ) ->
-  if antialias
-    experimentaldrawstroke st
-    #olddrawstroke st
-  else
-    drawhardlinewidth canvasobj, st.from, st.to, st.color, st.width/2
+    #if newdab.erase then
+    #huhh
+    #pixi
+    alpha = newdab.color.a
+    stage.addChild grof = new PIXI.Graphics()
+    grof.beginFill pixicolor( newdab.color ), alpha
+    tmprad = newdab.radius*newdab.ellipseratio
+    grof.drawElipse 0,0, newdab.radius*newdab.ellipseratio, newdab.radius
+    grof.rotation = newdab.angle
+    grof.position = new PIXI.Point newdab.pos.x, newdab.pos.y
+    #sprite = new PIXI.Sprite brushtexture
+    #sprite.position.x = newdab.pos.x
+    #sprite.position.y = newdab.pos.y
+    #stage.addChild sprite
+    #
 
 makestroke = ( st ) ->
   from = st.from
@@ -502,22 +388,10 @@ makestroke = ( st ) ->
   #strokedata = color: col, width: r, from: from, to: to,
   strokedata = st
   cache.push strokedata
-  replaytick()
+  #replaytick()
   if socket
     socket.emit 'stroke', strokedata
-
-dab = ( pos, r, col ) ->
-  dabdata = c: col, p: pos, r: r
-  cache.push dabdata
-  replaytick()
-  if socket
-    socket.emit 'stroke', dabdata
-
-drawdab = ( pos, r, col ) ->
-  canvasobj.beginPath()
-  canvasobj.arc pos.x, pos.y, r, 0, 2*Math.PI, true
-  canvasobj.fillStyle = csscolor col
-  canvasobj.fill()
+  #renderer.render stage
 
 toolbar = $ "<div id=toolbar>"
 toolbar.css position: 'relative', overflow: 'auto', height: '100%'
@@ -642,8 +516,7 @@ clearctx = (ctx) ->
   ctx.clearRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 
 clearcanvas = ->
-  layers.list.forEach (layer) ->
-    clearctx layer.canvas.getContext '2d'
+  #TODO FIX
 
 lastframe = 0
 
@@ -664,20 +537,41 @@ timecall = (func) ->
   func()
   Date.now()-starttime
 
+stagecount = 0
 replaytick = ->
-  if lastframe == 0 and cache.length > 3
-    disablecanvas()
   if lastframe == cache.length
     if nocache and cache.length > 100 then clearlocalcache()
     enablecanvas()
+    return
+  if stagecount > 100
+    stagecount=0
+    tex = new PIXI.RenderTexture CANVASWIDTH, CANVASHEIGHT
+    tex.render stage
+    #tex= PIXI.Texture.fromCanvas renderer.view
+    base= new PIXI.Sprite tex
+    stage = new PIXI.Stage 0xFFFFFF, true
+    stage.addChild base
+  displaycanvasctx.drawImage renderer.view, 0, 0
+  if lastframe == 0 and cache.length > 3
+    disablecanvas()
   starttime = Date.now()
   if cache.length > lastframe
-    #for x in [0..strokespertick]
-    curr = cache[lastframe]
-    drawstroke curr
-    #drawdab curr.p, curr.r, curr.c
-    lastframe++
+    for x in [0..strokespertick]
+      stagecount++
+      if lastframe is cache.length then break
+      curr = cache[lastframe]
+      drawstroke curr
+      lastframe++
   timebar.progressbar value: lastframe, max: cache.length
+
+luup = ->
+  replaytick()
+  requestAnimFrame -> renderer.render stage
+  #requestAnimFrame luup
+  setTimeout luup, 5
+
+#requestAnimFrame luup
+luup()
 
 cursoroncanvas=false
 displaycanvaselem.mouseenter -> cursoroncanvas=true
@@ -689,20 +583,20 @@ assembleimg = () ->
   clearctx displaycanvasctx
   displaycanvasctx.fillStyle='white'
   displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
-  layers.list.forEach (layer) ->
-    if layer.visible then displaycanvasctx.drawImage layer.canvas, 0, 0
 
 drawloop = ->
-  idealms=10
+  idealms=1
   if not paused
-    times = timecall -> replaytick lastframe
-  assembleimg()
+    replaytick lastframe
+  #assembleimg()
   if cursoroncanvas
     drawcursor mpos, color, maxradius
     drawcursor mpos, color, minradius
   networkcursors.forEach (c) -> c()
   networkcursors=[]
-  setTimeout drawloop, (idealms/strokespertick)
+
+  setTimeout drawloop, idealms
+  #PIXI
 
 drawcursor = ( pos, col, rad ) ->
   dcc=displaycanvasctx
@@ -816,12 +710,6 @@ savebutton.click -> exportjson()
 savebutton.button()
 container.append savebutton
 
-#aliasbutton = $ tag "button", "toggle (anti)aliasing"
-#aliasbutton.click -> antialias = not antialias
-#aliasbutton.button()
-#container.append aliasbutton
-#container.append label "(EXPERIMENTAL, MAY BE SUPER SLOW )"
-
 flipped = false
 toggleflip = () ->
   flipped = not flipped
@@ -830,22 +718,10 @@ toggleflip = () ->
   else
     displaycanvaselem.removeClass 'flipped'
 
-
 flipbutton = $ tag "button", "flip canvas view"
 flipbutton.click toggleflip
 flipbutton.button()
 container.append flipbutton
-
-
-container.append layerlist = $ "<div>"
-layerlist.append $ tag 'h3', 'layers'
-layers.list.forEach ( layer, index ) ->
-  layerlist.append but=$ tag "button", "toggle"
-  but.button { icons: { primary: "ui-icon-lightbulb" }, text: false }
-  but.click -> layer.visible = not layer.visible
-  layerlist.append layer.canvas
-  $(layer.canvas).css 'max-width': 100
-  $(layer.canvas).click -> layers.changeforreal index
 
 keytapbind 'i', toggleflip
 
@@ -931,7 +807,12 @@ cachebutton.button()
 replaycontrols.append pausebutton, replaybutton
 #cachebutton
 #loadbutton
-#archivebutton
+replaycontrols.append archivebutton
+
+
+tickbutton = $ "<button>advance one tick</button>"
+tickbutton.click replaytick
+replaycontrols.append tickbutton
 
 replaycontrols.append $ "<input type=checkbox id=nocache /><label for=nocache>clear cache automagically</label>"
 
@@ -982,16 +863,34 @@ timelog = (time,text) ->
   text=timestamp+"|&nbsp;"+text
   info.prepend text
 
+
+weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+datelog = (time) ->
+  dd=zeropad time.getUTCDate()
+  mm=zeropad time.getUTCMonth()+1
+  yyyy=time.getUTCFullYear()
+  weekday=weekdays[time.getUTCDay()]
+  timestamp = "#{yyyy}/#{mm}/#{dd} (#{weekday})"
+  stuff=$ tag "div", timestamp
+  stuff.css color: 'salmon', 'border-bottom': '1px solid salmon'
+  info.prepend stuff
+
 htmlencode = (str) ->
   String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
+
+prevtime = 0
+
 someonesaid = ( timems, name, text ) ->
   time = new Date timems
+  if timems - prevtime > 1000*60*60
+    datelog time
   oldrandom=Math.random
   Math.seedrandom name
   hue = Math.random()*360
   Math.random=oldrandom
   timelog time, "<span style=\"color: hsl(#{hue},50%,50%)\">#{htmlencode name}></span> #{htmlencode text}<br/>\n"
+  prevtime = timems
 
 chatname = false
 say = ( text ) ->
@@ -1020,7 +919,6 @@ chatinput
 body.append info
 info.css 'user-select': 'text'
 
-
 skipbutton.css 'float': 'right'
 
 log = (text) ->
@@ -1038,7 +936,8 @@ $(document).ready ->
   loadsession()
   loadchat()
   disablecanvas()
-  drawloop()
+  luup()
+  #drawloop()
   brushsizedelta 0
   updateswatches()
   if NETWORKED
@@ -1050,161 +949,6 @@ $(document).ready ->
       someonesaid data.time, data.name, data.text 
     socket.on 'bomb', (data) ->
       bombsahoy()
-
-drawpixel = ( ctx, x, y, col ) ->
-  ctx.fillStyle = csscolor col
-  size = 1
-  ctx.fillRect x, y, size, size
-
-intvector = (vec) ->  
-  x: Math.round( vec.x ), y: Math.round( vec.y )
-
-drawhardline= ( ctx, from, to, col ) ->
-  #from = intvector from
-  #to = intvector to
-  deltax = to.x - from.x
-  deltay = to.y - from.y
-  error = 0
-  deltaerr = Math.abs(deltay/deltax)
-  y = from.y
-  for x in [from.x..to.x]
-    drawpixel ctx, x, y, col
-    error = error + deltaerr
-    if error > 0.5
-      y = y + 1
-      error = error - 1
-
-bresenham = ( from, to, func ) ->
-  from = intvector from
-  to = intvector to
-  dx = Math.abs to.x-from.x
-  dy = Math.abs to.y-from.y
-  sx = if from.x < to.x then 1 else -1
-  sy = if from.y < to.y then 1 else -1
-  x = from.x
-  y = from.y
-  err=dx-dy
-  loopiterations = 0
-  loop
-    loopiterations++
-    func x, y
-    if x==to.x and y==to.y
-      break
-    e2=2*err
-    if e2>-dy
-      err=err-dy
-      x+=sx
-    if x==to.x and y==to.y
-      func x, y
-      break
-    if e2<dx
-      err=err+dx
-      y+=sy
-
-drawhardline = ( ctx, from, to, col ) ->
-  bresenham from, to, ( x, y ) ->
-    drawpixel ctx, x, y, col
-
-ALTdrawhardlinewidth = ( ctx, from, to, col, r ) ->
-  bresenham from, to, ( x, y ) ->
-    pos = V2d x, y
-    drawhardfilledcircle ctx, pos, r, col
-
-drawhardfilledcircle = ( ctx, pos, r, col ) ->
-  r = Math.floor r
-  x0 = Math.round pos.x
-  y0 = Math.round pos.y
-  x = r
-  y = 0
-  radiuserror = 1-x
-  while x>= y
-    drawhardline ctx, V2d( x+x0,  y+y0), V2d(-x+x0,  y+y0), col
-    drawhardline ctx, V2d( y+x0,  x+y0), V2d(-y+x0,  x+y0), col
-    drawhardline ctx, V2d(-x+x0, -y+y0), V2d( x+x0, -y+y0), col
-    drawhardline ctx, V2d(-y+x0, -x+y0), V2d( y+x0, -x+y0), col
-    y++
-    if radiuserror<0
-      radiuserror+=2*y+1
-    else
-      x--
-      radiuserror+=2*(y-x+1)
-
-midpointcircle = ( pos, r, func ) ->
-  if Math.floor(r) < r
-    offs = V2d 10, 0
-    rad = Math.floor(r)
-    midpointcircle vadd(pos,V2d(1,0)), rad, func
-    midpointcircle vadd(pos,V2d(0,1)), rad, func
-    return
-  x0 = Math.floor pos.x
-  y0 = Math.floor pos.y
-  x = r
-  y = 0
-  radiuserror = 1-x
-  while x>= y
-    func x+x0, y+y0
-    func y+x0, x+y0
-    func -x+x0, y+y0
-    func -y+x0, x+y0
-    func -x+x0, -y+y0
-    func -y+x0, -x+y0
-    func x+x0, -y+y0
-    func y+x0, -x+y0
-    y++
-    if radiuserror<0
-      radiuserror+=2*y+1
-    else
-      x--
-      radiuserror+=2*(y-x+1)
-
-drawhardcircle = ( ctx, pos, r, col ) ->
-  midpointcircle pos, r, (x, y) ->
-    drawpixel ctx, x, y, col
-
-sign = ( x ) ->
-  if x > 0 then return 1
-  if x < 0 then return -1
-  return 0
-
-drawhardlinewidth = ( ctx, from, to, col, r ) ->
-  r= r-1
-  drawhardfilledcircle ctx, from, r, col
-  offs = vsub to, from
-  #drawhardline ctx, from, to, col
-  midpointcircle from, r, ( x, y ) ->
-    f = V2d x,y
-    t = vadd f, offs
-    drawhardline ctx, f, t, col
-    SHIT = vsub from, f
-    xSHIT = V2d( sign(SHIT.x), 0 )
-    drawhardline ctx, vadd(f,xSHIT), vadd(t,xSHIT), col
-    ySHIT = V2d( 0, sign(SHIT.y) )
-    drawhardline ctx, vadd(f,ySHIT), vadd(t,ySHIT), col
-
-#drawhardlinewidth = (ctx,from,to,col,r) ->
-#  drawhardcircle ctx,from,r,col
-
-FUCK = ->
-  x0 = Math.floor pos.x
-  y0 = Math.floor pos.y
-  x = r
-  y = 0
-  radiuserror = 1-x
-  while x>= y
-    drawpixel ctx, x+x0, y+y0, col
-    drawpixel ctx, y+x0, x+y0, col
-    drawpixel ctx, -x+x0, y+y0, col
-    drawpixel ctx, -y+x0, x+y0, col
-    drawpixel ctx, -x+x0, -y+y0, col
-    drawpixel ctx, -y+x0, -x+y0, col
-    drawpixel ctx, x+x0, -y+y0, col
-    drawpixel ctx, y+x0, -x+y0, col
-    y++
-    if radiuserror<0
-      radiuserror+=2*y+1
-    else
-      x--
-      radiuserror+=2*(y-x+1)
 
 updatecolor rgba 0, 0, 0, 1
 

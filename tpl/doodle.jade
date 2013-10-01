@@ -1,0 +1,11 @@
+!!!
+html
+    head
+        title = "doodle time"
+	script(src='/chat.js')
+	script(src='/socket.io/socket.io.js')
+    body
+       .controls
+           #content(style='width: 500px; height: 300px; overflow-y: scroll)
+           input.field(style='width:350px')
+	   input.send(type='button', value='send')
