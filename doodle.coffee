@@ -15,6 +15,11 @@ currentbrush = 'default'
 
 canvasobj = false
 
+linearInterpolation = (from, to, steps) ->
+  steps--
+  offs = (to-from)/steps
+  [0..steps].map (n) -> from+n*offs
+
 contain = $ "<div>"
 contain.resizable handles: 's' # grid: 50
 canvascontainer = $ "<div id=canvascontainer>"
@@ -26,7 +31,6 @@ canvascontainer.css height: '100%'
 
 body = $ "body"
 displaycanvaselem = $ "<canvas id=doodlecanvas>"
-#id=doodlecanvas width=1000 height=600>"
 body.append contain
 contain.append canvascontainer
 
@@ -62,13 +66,25 @@ recentcolors = [ rgba(0,0,0,1), rgba(255,255,255,1), rgba(255,0,0,1), rgba(255,1
 
 socket = undefined
 
-stage = new PIXI.Stage 0xFFFFFF, true
+blank = new PIXI.Graphics
+blank.beginFill 0xffffff
+blank.drawRect 0, 0, CANVASWIDTH, CANVASHEIGHT
+blank.endFill()
+
+newstage = ->
+  ns=new PIXI.Stage 0xFFFFFF, false
+  return ns
+
+stage = newstage()
+stage.addChild blank
+
 #stage.setInteractive true
 
-transparent = true
+transparent = false
 antialias = true
 
-renderer = new PIXI.autoDetectRenderer CANVASWIDTH, CANVASHEIGHT, null, transparent, antialias
+#renderer = new PIXI.autoDetectRenderer CANVASWIDTH, CANVASHEIGHT, null, transparent, antialias
+renderer = new PIXI.CanvasRenderer CANVASWIDTH, CANVASHEIGHT, null, transparent, antialias
 
 canvascontainer.append renderer.view
 
@@ -326,6 +342,13 @@ brushpresets.wetpaint = {
     return pos: pos, radius: st.width/2, angle: angle, ellipseratio: ellipseratio, color: tmpcolor
 }
 
+#temporarily delete some things
+delete brushpresets["eraser"]
+delete brushpresets["smudge"]
+delete brushpresets["noise"]
+delete brushpresets["wetpaint"]
+delete brushpresets["wetpaint"]
+
 pixicolor = (rgba) ->
   return rgba.r*256*256+rgba.g*256+rgba.b
   #*0x000001
@@ -345,11 +368,12 @@ brushtexture = PIXI.Texture.fromCanvas brushcanvas
 
 drawstroke = ( st ) ->
   #stage = new PIXI.Stage 0xFFFFFF, true
-  radiusperdab = 1/3
+  radiusperdab = 1/20
   threshold = st.width*radiusperdab
   FRAC=vdist( st.from, st.to )/(st.width)
   dabcount=Math.ceil vdist( st.from, st.to )/threshold
   dabcount = Math.max 2,dabcount
+  dabcount = Math.min 20, dabcount
   #fuck
   #auhgh tihs is too slow
   #Math.seedrandom st.brush+String(st.to.x)+String(st.to.y)+String(st.from.x)+String(st.from.y)+String(dabcount)
@@ -388,7 +412,7 @@ makestroke = ( st ) ->
   #strokedata = color: col, width: r, from: from, to: to,
   strokedata = st
   cache.push strokedata
-  #replaytick()
+  replaytick()
   if socket
     socket.emit 'stroke', strokedata
   #renderer.render stage
@@ -516,7 +540,8 @@ clearctx = (ctx) ->
   ctx.clearRect 0, 0, CANVASWIDTH, CANVASHEIGHT
 
 clearcanvas = ->
-  #TODO FIX
+  stage = newstage()
+  stage.addChild blank
 
 lastframe = 0
 
@@ -538,20 +563,23 @@ timecall = (func) ->
   Date.now()-starttime
 
 stagecount = 0
+
+
+rendertex = new PIXI.RenderTexture CANVASWIDTH, CANVASHEIGHT
+
 replaytick = ->
   if lastframe == cache.length
     if nocache and cache.length > 100 then clearlocalcache()
     enablecanvas()
     return
-  if stagecount > 100
+  if stagecount > 10
     stagecount=0
-    tex = new PIXI.RenderTexture CANVASWIDTH, CANVASHEIGHT
-    tex.render stage
+    rendertex.render stage
     #tex= PIXI.Texture.fromCanvas renderer.view
-    base= new PIXI.Sprite tex
-    stage = new PIXI.Stage 0xFFFFFF, true
+    base= new PIXI.Sprite rendertex
+    stage = newstage()
     stage.addChild base
-  displaycanvasctx.drawImage renderer.view, 0, 0
+  #displaycanvasctx.drawImage renderer.view, 0, 0
   if lastframe == 0 and cache.length > 3
     disablecanvas()
   starttime = Date.now()
@@ -563,12 +591,18 @@ replaytick = ->
       drawstroke curr
       lastframe++
   timebar.progressbar value: lastframe, max: cache.length
+  requestAnimFrame renderoneframe
+
+renderoneframe = () ->
+  renderer.render stage
+  return
 
 luup = ->
-  replaytick()
-  requestAnimFrame -> renderer.render stage
+  if not paused
+    replaytick()
+  #renderoneframe()
   #requestAnimFrame luup
-  setTimeout luup, 5
+  setTimeout luup, 10
 
 #requestAnimFrame luup
 luup()
@@ -579,16 +613,10 @@ displaycanvaselem.mouseout -> cursoroncanvas=false
 
 networkcursors = []
 
-assembleimg = () ->
-  clearctx displaycanvasctx
-  displaycanvasctx.fillStyle='white'
-  displaycanvasctx.fillRect 0, 0, CANVASWIDTH, CANVASHEIGHT
-
 drawloop = ->
   idealms=1
   if not paused
     replaytick lastframe
-  #assembleimg()
   if cursoroncanvas
     drawcursor mpos, color, maxradius
     drawcursor mpos, color, minradius
@@ -676,7 +704,6 @@ toolbar.append container = $ "<div>"
 
 container.append label "export "
 exportpng = ->
-  assembleimg()
   url=displaycanvaselem.get(0).toDataURL("image/png")
 
   window.open url
@@ -807,12 +834,14 @@ cachebutton.button()
 replaycontrols.append pausebutton, replaybutton
 #cachebutton
 #loadbutton
-replaycontrols.append archivebutton
+
+#replaycontrols.append archivebutton
 
 
 tickbutton = $ "<button>advance one tick</button>"
 tickbutton.click replaytick
 replaycontrols.append tickbutton
+tickbutton.button()
 
 replaycontrols.append $ "<input type=checkbox id=nocache /><label for=nocache>clear cache automagically</label>"
 
